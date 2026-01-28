@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Apex",
+        "description": "Enter your Apex host/IP and credentials.",
+        "data": {
+          "host": "Host (IP)",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Apex",
+        "description": "Update credentials for {host}.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "abort": {
+      "reauth_successful": "Reauthentication successful"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    }
+  }
+}

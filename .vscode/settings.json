@@ -1,0 +1,34 @@
+{
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[json5]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnType": true,
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+      {
+        "column": 88
+      }
+    ],
+    "editor.tabSize": 4,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "never",
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "prettier.enable": false,
+  "python.analysis.diagnosticMode": "workspace",
+  "ruff.lineLength": 88,
+  "ruff.useBundled": false,
+  "ruff.path": [
+    ".venv/bin/ruff"
+  ]
+}

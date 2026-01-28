@@ -1,0 +1,22 @@
+name: Markdown lint
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Lint Markdown (markdownlint-cli2)
+        run: |
+          npx --yes markdownlint-cli2

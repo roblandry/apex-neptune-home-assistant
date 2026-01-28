@@ -1,0 +1,16 @@
+{
+  "domain": "apex_fusion",
+  "name": "Apex Fusion (Local)",
+  "config_flow": true,
+  "documentation": "https://github.com/roblandry/apex-neptune-home-assistant",
+  "issue_tracker": "https://github.com/roblandry/apex-neptune-home-assistant/issues",
+  "version": "0.0.1",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "codeowners": [
+    "@roblandry"
+  ],
+  "loggers": [
+    "apex_fusion"
+  ]
+}

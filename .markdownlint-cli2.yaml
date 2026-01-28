@@ -1,0 +1,58 @@
+# markdownlint-cli2 configuration
+# Docs: https://github.com/DavidAnson/markdownlint-cli2
+
+# Lint all Markdown files in the repo.
+globs:
+  - "**/*.md"
+
+# Ignore generated/vendor directories.
+ignores:
+  - "**/node_modules/**"
+  - "**/.git/**"
+  - "**/.venv/**"
+  - ".venv/**"
+
+# Start from the default ruleset, but disable rules that conflict with this
+# repo's documentation style (lots of HTML for badges/images, long lines, etc.).
+config:
+  default: true
+
+  # Line length: README has many long badge/link lines.
+  MD013: false
+
+  # Inline HTML: README uses <p>, <img>, <table>, <br /> heavily.
+  MD033: false
+
+  # Bare URLs: repo uses bare links in several docs.
+  MD034: false
+
+  # First line heading: badges/images typically precede the first heading.
+  MD041: false
+
+  # GitHub admonitions/callouts: keep blank lines between separate callouts
+  # so they don't visually merge in rendered Markdown.
+  MD028: false
+
+  # The docs in this repo intentionally use a relaxed style (lots of embedded
+  # HTML/images, loose spacing rules, etc.). Disable the most common formatting
+  # rules so the check can be enabled immediately without requiring a massive
+  # docs rewrite.
+  # MD001: false  # heading-increment
+  # MD007: false  # ul-indent
+  # MD009: false  # no-trailing-spaces
+  # MD012: false  # no-multiple-blanks
+  # MD019: false  # no-multiple-space-atx
+  # MD022: false  # blanks-around-headings
+  # MD023: false  # heading-start-left
+  # MD024: false  # no-duplicate-heading
+  # MD025: false  # single-title
+  # MD026: false  # no-trailing-punctuation
+  # MD027: false  # no-multiple-space-blockquote
+  # MD028: false  # no-blanks-blockquote
+  # MD029: false  # ol-prefix
+  # MD031: false  # blanks-around-fences
+  # MD032: false  # blanks-around-lists
+  # MD039: false  # no-space-in-links
+  # MD040: false  # fenced-code-language
+  # MD045: false  # no-alt-text
+  # MD059: false  # descriptive-link-text
