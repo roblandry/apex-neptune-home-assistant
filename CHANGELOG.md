@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.1.0-rc.1
 
-- Initial release work in progress.
+### CI
+- replace TODO-to-issue workflow with repo script
+
+### Features
+- add firmware update entities and trident levels
+
+### Fixes
+- add issue templates, triage labels, and release tooling
+
