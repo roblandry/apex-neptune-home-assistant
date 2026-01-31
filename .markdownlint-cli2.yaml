@@ -7,10 +7,14 @@ globs:
 
 # Ignore generated/vendor directories.
 ignores:
-  - "**/node_modules/**"
+  - "**/.dev/**"
   - "**/.git/**"
+  - "**/.pytest_cache/**"
+  - "**/.ruff_cache/**"
   - "**/.venv/**"
-  - ".venv/**"
+  - "**/node_modules/**"
+  - "**/repos/**"
+  - CLONE.md
 
 # Start from the default ruleset, but disable rules that conflict with this
 # repo's documentation style (lots of HTML for badges/images, long lines, etc.).
