@@ -28,7 +28,9 @@ class _BinaryRef:
     value_fn: Callable[[dict[str, Any]], bool | None]
 
 
-def _build_device_info(*, host: str, meta: dict[str, Any]) -> DeviceInfo:
+def _build_device_info(
+    *, host: str, meta: dict[str, Any], device_identifier: str
+) -> DeviceInfo:
     """Build DeviceInfo for this controller.
 
     Args:
@@ -42,7 +44,7 @@ def _build_device_info(*, host: str, meta: dict[str, Any]) -> DeviceInfo:
     model = str(meta.get("type") or meta.get("hardware") or "Apex").strip() or "Apex"
     name = str(meta.get("hostname") or f"Apex ({host})")
 
-    identifiers = {(DOMAIN, serial or host)}
+    identifiers = {(DOMAIN, device_identifier)}
     return DeviceInfo(
         identifiers=identifiers,
         name=name,
@@ -126,7 +128,11 @@ class ApexDiagnosticBinarySensor(BinarySensorEntity):
 
         self._attr_unique_id = f"{serial}_diag_bool_{ref.key}".lower()
         self._attr_name = ref.name
-        self._attr_device_info = _build_device_info(host=host, meta=meta)
+        self._attr_device_info = _build_device_info(
+            host=host,
+            meta=meta,
+            device_identifier=coordinator.device_identifier,
+        )
 
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)

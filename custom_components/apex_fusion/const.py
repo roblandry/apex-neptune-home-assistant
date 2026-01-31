@@ -12,6 +12,10 @@ from homeassistant.const import Platform
 
 DOMAIN: Final = "apex_fusion"
 
+# Use a stable logger name so users can configure logging via
+# `logger: default: ... logs: { custom_components.apex_fusion: debug }`.
+LOGGER_NAME: Final = f"custom_components.{DOMAIN}"
+
 CONF_HOST: Final = "host"
 CONF_USERNAME: Final = "username"
 CONF_PASSWORD: Final = "password"

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import xml.etree.ElementTree as ET
+from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from yarl import URL
 
 from .const import (
     CONF_HOST,
@@ -25,10 +27,41 @@ from .const import (
     DEFAULT_STATUS_PATH,
     DEFAULT_USERNAME,
     DOMAIN,
+    LOGGER_NAME,
 )
 from .coordinator import build_base_url, build_status_url
 
-_LOGGER = logging.getLogger(DOMAIN)
+_LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+_TRANSIENT_HTTP_STATUSES: set[int] = {
+    HTTPStatus.REQUEST_TIMEOUT,
+    HTTPStatus.TOO_MANY_REQUESTS,
+    HTTPStatus.INTERNAL_SERVER_ERROR,
+    HTTPStatus.BAD_GATEWAY,
+    HTTPStatus.SERVICE_UNAVAILABLE,
+    HTTPStatus.GATEWAY_TIMEOUT,
+}
+
+
+def _is_transient_http_status(status: int) -> bool:
+    return status in _TRANSIENT_HTTP_STATUSES
+
+
+def _session_has_connect_sid(session: aiohttp.ClientSession, base_url: str) -> bool:
+    try:
+        cookies = session.cookie_jar.filter_cookies(URL(base_url))
+        return "connect.sid" in cookies
+    except Exception:
+        return False
+
+
+def _set_connect_sid_cookie(
+    session: aiohttp.ClientSession, *, base_url: str, sid: str
+) -> None:
+    if not sid:
+        return
+    session.cookie_jar.update_cookies({"connect.sid": sid}, response_url=URL(base_url))
 
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -120,66 +153,164 @@ async def _async_validate_input(
         auth = aiohttp.BasicAuth(username or "admin", password)
 
     # Prefer REST if present; fall back to XML.
+    rest_invalid_auth = False
+
     if password:
         try:
             login_url = f"{base_url}/rest/login"
-            status_url = f"{base_url}/rest/status/data"
+            accept_headers = {"Accept": "*/*", "Content-Type": "application/json"}
 
-            _LOGGER.debug("Trying REST validation: %s", status_url)
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                _LOGGER.debug(
+                    "REST validation attempt %s/%s host=%s user=%s",
+                    attempt,
+                    max_attempts,
+                    host,
+                    username,
+                )
 
-            async with async_timeout.timeout(10):
-                async with session.post(
-                    login_url,
-                    json={
-                        "login": username or "admin",
-                        "password": password,
-                        "remember_me": False,
-                    },
-                    headers={"Accept": "application/json"},
-                ) as resp:
-                    _LOGGER.debug("REST login HTTP %s", resp.status)
-                    if resp.status == 404:
+                try:
+                    login_cookie_sid = ""
+                    login_body = ""
+
+                    login_candidates: list[str] = []
+                    if username:
+                        login_candidates.append(username)
+                    if "admin" not in login_candidates:
+                        login_candidates.append("admin")
+
+                    logged_in = False
+                    for login_user in login_candidates:
+                        async with async_timeout.timeout(10):
+                            async with session.post(
+                                login_url,
+                                json={
+                                    "login": login_user,
+                                    "password": password,
+                                    "remember_me": False,
+                                },
+                                headers=accept_headers,
+                            ) as resp:
+                                _LOGGER.debug(
+                                    "REST login HTTP %s content_type=%s",
+                                    resp.status,
+                                    resp.headers.get("Content-Type"),
+                                )
+                                if resp.status == 404:
+                                    raise KeyError("rest_not_supported")
+                                if resp.status in (401, 403):
+                                    _LOGGER.debug(
+                                        "REST login rejected for user=%s; trying next candidate",
+                                        login_user,
+                                    )
+                                    continue
+                                if _is_transient_http_status(resp.status):
+                                    raise CannotConnect
+                                resp.raise_for_status()
+                                login_body = await resp.text()
+
+                                morsel = resp.cookies.get("connect.sid")
+                                if morsel is not None and morsel.value:
+                                    login_cookie_sid = morsel.value
+                                logged_in = True
+                                break
+
+                    if not logged_in:
+                        # Some devices/users may not permit REST login but still
+                        # allow legacy status.xml BasicAuth access.
+                        rest_invalid_auth = True
+                        raise CannotConnect
+
+                    sid_set = False
+                    sid_value = ""
+                    if login_cookie_sid:
+                        _set_connect_sid_cookie(
+                            session, base_url=base_url, sid=login_cookie_sid
+                        )
+                        sid_set = True
+                        sid_value = login_cookie_sid
+
+                    sid_set = sid_set or _session_has_connect_sid(session, base_url)
+                    if not sid_set and login_body:
+                        try:
+                            login_any: Any = json.loads(login_body)
+                            if isinstance(login_any, dict):
+                                sid_any: Any = cast(dict[str, Any], login_any).get(
+                                    "connect.sid"
+                                )
+                                if isinstance(sid_any, str) and sid_any:
+                                    _set_connect_sid_cookie(
+                                        session, base_url=base_url, sid=sid_any
+                                    )
+                                    sid_set = True
+                                    sid_value = sid_any
+                        except json.JSONDecodeError:
+                            pass
+
+                    _LOGGER.debug(
+                        "REST login session established=%s (will_send_cookie_header=%s)",
+                        sid_set,
+                        bool(sid_value),
+                    )
+
+                    request_headers = dict(accept_headers)
+                    if sid_value:
+                        request_headers["Cookie"] = f"connect.sid={sid_value}"
+
+                    status_urls = [
+                        f"{base_url}/rest/status",
+                    ]
+
+                    status_text = ""
+                    status_ok = False
+                    for status_url in status_urls:
+                        async with async_timeout.timeout(10):
+                            async with session.get(
+                                status_url, headers=request_headers
+                            ) as resp:
+                                _LOGGER.debug(
+                                    "REST status HTTP %s content_type=%s has_connect_sid=%s",
+                                    resp.status,
+                                    resp.headers.get("Content-Type"),
+                                    _session_has_connect_sid(session, base_url),
+                                )
+                                if resp.status == 404:
+                                    continue
+                                if resp.status in (401, 403):
+                                    rest_invalid_auth = True
+                                    raise CannotConnect
+                                if _is_transient_http_status(resp.status):
+                                    raise CannotConnect
+                                resp.raise_for_status()
+                                status_text = await resp.text()
+                                status_ok = True
+                                break
+
+                    if not status_ok:
                         raise KeyError("rest_not_supported")
-                    if resp.status in (401, 403):
-                        raise InvalidAuth
-                    resp.raise_for_status()
-                    login_body = await resp.text()
 
-            cookie_header: dict[str, str] = {"Accept": "application/json"}
-            try:
-                login_any: Any = json.loads(login_body) if login_body else {}
-                if isinstance(login_any, dict):
-                    login_dict = cast(dict[str, Any], login_any)
-                    sid_any: Any = login_dict.get("connect.sid")
-                    if isinstance(sid_any, str) and sid_any:
-                        cookie_header["Cookie"] = f"connect.sid={sid_any}"
-            except Exception:
-                pass
+                    # Ensure it's JSON.
+                    json.loads(status_text) if status_text else {}
 
-            async with async_timeout.timeout(10):
-                async with session.get(status_url, headers=cookie_header) as resp:
-                    _LOGGER.debug("REST status HTTP %s", resp.status)
-                    if resp.status == 404:
-                        raise KeyError("rest_not_supported")
-                    if resp.status in (401, 403):
-                        raise InvalidAuth
-                    resp.raise_for_status()
-                    status_text = await resp.text()
+                    title = f"Apex ({host})"
+                    return {"title": title, "unique_id": host}
 
-            # Ensure it's JSON.
-            json.loads(status_text) if status_text else {}
+                except (asyncio.TimeoutError, aiohttp.ClientError) as err:
+                    _LOGGER.debug("Transient REST validation error: %s", err)
+                    if attempt < max_attempts:
+                        await asyncio.sleep(0.5 * attempt)
 
-            title = f"Apex ({host})"
-            return {"title": title, "unique_id": host}
+            raise CannotConnect
 
         except KeyError:
             # No REST, try XML.
             _LOGGER.debug("REST not supported; falling back to status.xml")
             pass
         except InvalidAuth:
-            _LOGGER.debug("REST auth failed for host=%s user=%s", host, username)
+            # Reserved for legacy XML auth failures below.
             raise
-        except (asyncio.TimeoutError, aiohttp.ClientError, json.JSONDecodeError) as err:
+        except (CannotConnect, json.JSONDecodeError) as err:
             # REST flaky? Try XML before failing.
             _LOGGER.debug("REST validation failed; trying status.xml: %s", err)
 
@@ -196,6 +327,12 @@ async def _async_validate_input(
         ET.fromstring(body)
 
     except InvalidAuth:
+        if rest_invalid_auth:
+            _LOGGER.debug(
+                "REST login rejected and legacy XML auth failed host=%s user=%s",
+                host,
+                username,
+            )
         raise
     except (asyncio.TimeoutError, aiohttp.ClientError, ET.ParseError) as err:
         raise CannotConnect from err
@@ -208,10 +345,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Apex Fusion."""
 
     VERSION = 1
-
-    def __init__(self) -> None:
-        """Initialize the config flow."""
-        self._reauth_entry_id: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -254,7 +387,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Returns:
             A Home Assistant flow result.
         """
-        self._reauth_entry_id = str(user_input.get("entry_id") or "") or None
+        # NOTE: Home Assistant reserves `_reauth_entry_id` on ConfigFlow.
+        self._apex_reauth_entry_id = str(user_input.get("entry_id") or "") or None
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -268,10 +402,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Returns:
             A Home Assistant flow result.
         """
-        if not self._reauth_entry_id:
+        entry_id = getattr(self, "_apex_reauth_entry_id", None)
+        if not entry_id:
             return self.async_abort(reason="unknown")
 
-        entry = self.hass.config_entries.async_get_entry(self._reauth_entry_id)
+        entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
             return self.async_abort(reason="unknown")
 

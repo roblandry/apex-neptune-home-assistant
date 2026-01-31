@@ -32,6 +32,8 @@ from homeassistant.helpers.typing import StateType
 from .const import CONF_HOST, DOMAIN
 from .coordinator import ApexNeptuneDataUpdateCoordinator
 
+_SIMPLE_REST_SINGLE_SENSOR_MODE = False
+
 
 def _icon_for_probe_type(probe_type: str, probe_name: str) -> str | None:
     """Return an icon for a probe based on its reported type/name.
@@ -285,125 +287,151 @@ async def async_setup_entry(
     """
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # Developer toggle: when enabled, only expose a single REST debug sensor.
+    if _SIMPLE_REST_SINGLE_SENSOR_MODE:
+        async_add_entities([ApexRestDebugSensor(coordinator, entry)])
+        return
+
     host = str(entry.data.get(CONF_HOST, ""))
+
+    added_probe_keys: set[str] = set()
+    added_outlet_dids: set[str] = set()
+
+    def _add_probe_and_outlet_entities() -> None:
+        coordinator_data = coordinator.data or {}
+        new_entities: list[SensorEntity] = []
+
+        probes_any = coordinator_data.get("probes", {})
+        if isinstance(probes_any, dict):
+            probes = cast(dict[str, Any], probes_any)
+            for key, probe_any in probes.items():
+                key_str = str(key)
+                if not key_str or key_str in added_probe_keys:
+                    continue
+                probe = (
+                    cast(dict[str, Any], probe_any)
+                    if isinstance(probe_any, dict)
+                    else {}
+                )
+                probe_name = str(probe.get("name") or key_str)
+                probe_type = str(probe.get("type") or "")
+                new_entities.append(
+                    ApexProbeSensor(
+                        coordinator,
+                        entry,
+                        ref=_ProbeRef(
+                            key=key_str,
+                            name=_friendly_probe_name(
+                                name=probe_name, probe_type=probe_type
+                            ),
+                        ),
+                    )
+                )
+                added_probe_keys.add(key_str)
+
+        outlets_any = coordinator_data.get("outlets", [])
+        if isinstance(outlets_any, list):
+            for outlet_any in cast(list[Any], outlets_any):
+                if not isinstance(outlet_any, dict):
+                    continue
+                outlet = cast(dict[str, Any], outlet_any)
+                did_any = outlet.get("device_id")
+                did = did_any if isinstance(did_any, str) else None
+                if not did or did in added_outlet_dids:
+                    continue
+                outlet_type = outlet.get("type")
+                outlet_type_str = outlet_type if isinstance(outlet_type, str) else None
+                outlet_name = _friendly_outlet_name(
+                    outlet_name=str(outlet.get("name") or did),
+                    outlet_type=outlet_type_str,
+                )
+                new_entities.append(
+                    ApexOutletStatusSensor(
+                        coordinator,
+                        entry,
+                        ref=_OutletRef(did=did, name=outlet_name),
+                    )
+                )
+                added_outlet_dids.add(did)
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    _add_probe_and_outlet_entities()
+    remove = coordinator.async_add_listener(_add_probe_and_outlet_entities)
+    entry.async_on_unload(remove)
 
     coordinator_data = coordinator.data or {}
     meta_any = coordinator_data.get("meta", {})
     meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-    network_any = coordinator_data.get("network", {})
-    network = cast(dict[str, Any], network_any) if isinstance(network_any, dict) else {}
     serial_for_ids = str(meta.get("serial") or host or "apex").replace(":", "_")
-    probes = cast(dict[str, Any], coordinator_data.get("probes", {}))
-    entities: list[SensorEntity] = []
-
-    for key, probe_any in probes.items():
-        probe = cast(dict[str, Any], probe_any) if isinstance(probe_any, dict) else {}
-        probe_name = str(probe.get("name") or key)
-        probe_type = str(probe.get("type") or "")
-        entities.append(
-            ApexProbeSensor(
-                coordinator,
-                entry,
-                ref=_ProbeRef(
-                    key=str(key),
-                    name=_friendly_probe_name(name=probe_name, probe_type=probe_type),
-                ),
-            )
-        )
-
-    outlets_any = coordinator_data.get("outlets", [])
-    if isinstance(outlets_any, list):
-        for outlet_any in cast(list[Any], outlets_any):
-            if not isinstance(outlet_any, dict):
-                continue
-            outlet = cast(dict[str, Any], outlet_any)
-            did_any = outlet.get("device_id")
-            did = did_any if isinstance(did_any, str) else None
-            if not did:
-                continue
-            outlet_type = outlet.get("type")
-            outlet_type_str = outlet_type if isinstance(outlet_type, str) else None
-            outlet_name = _friendly_outlet_name(
-                outlet_name=str(outlet.get("name") or did),
-                outlet_type=outlet_type_str,
-            )
-            entities.append(
-                ApexOutletStatusSensor(
-                    coordinator,
-                    entry,
-                    ref=_OutletRef(did=did, name=outlet_name),
-                )
-            )
-
-    async_add_entities(entities)
 
     diagnostic_entities: list[SensorEntity] = []
-    if network:
-        diagnostic_entities.extend(
-            [
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_ipaddr".lower(),
-                    name="IP Address",
-                    value_fn=_network_field("ipaddr"),
-                ),
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_gateway".lower(),
-                    name="Gateway",
-                    value_fn=_network_field("gateway"),
-                ),
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_netmask".lower(),
-                    name="Netmask",
-                    value_fn=_network_field("netmask"),
-                ),
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_ssid".lower(),
-                    name="Wi-Fi SSID",
-                    value_fn=_network_field("ssid"),
-                ),
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_wifi_strength".lower(),
-                    name="Wi-Fi Strength",
-                    native_unit=PERCENTAGE,
-                    value_fn=_network_field("strength"),
-                ),
-                ApexDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    unique_id=f"{serial_for_ids}_diag_wifi_quality".lower(),
-                    name="Wi-Fi Quality",
-                    native_unit=PERCENTAGE,
-                    value_fn=_network_field("quality"),
-                ),
-            ]
-        )
-
-    if meta.get("firmware_latest"):
-        diagnostic_entities.append(
+    # Always create diagnostic entities so they exist even if the first poll
+    # falls back to legacy data; values will populate once REST fields appear.
+    diagnostic_entities.extend(
+        [
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_ipaddr".lower(),
+                name="IP Address",
+                value_fn=_network_field("ipaddr"),
+            ),
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_gateway".lower(),
+                name="Gateway",
+                value_fn=_network_field("gateway"),
+            ),
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_netmask".lower(),
+                name="Netmask",
+                value_fn=_network_field("netmask"),
+            ),
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_ssid".lower(),
+                name="Wi-Fi SSID",
+                value_fn=_network_field("ssid"),
+            ),
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_wifi_strength".lower(),
+                name="Wi-Fi Strength",
+                native_unit=PERCENTAGE,
+                value_fn=_network_field("strength"),
+            ),
+            ApexDiagnosticSensor(
+                coordinator,
+                entry,
+                unique_id=f"{serial_for_ids}_diag_wifi_quality".lower(),
+                name="Wi-Fi Quality",
+                native_unit=PERCENTAGE,
+                value_fn=_network_field("quality"),
+            ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_latest_firmware".lower(),
                 name="Latest Firmware",
                 value_fn=_meta_field("firmware_latest"),
-            )
-        )
+            ),
+        ]
+    )
 
     if diagnostic_entities:
         async_add_entities(diagnostic_entities)
 
 
-def _build_device_info(*, host: str, meta: dict[str, Any]) -> DeviceInfo:
+def _build_device_info(
+    *, host: str, meta: dict[str, Any], device_identifier: str
+) -> DeviceInfo:
     """Build DeviceInfo for this controller.
 
     Args:
@@ -417,7 +445,7 @@ def _build_device_info(*, host: str, meta: dict[str, Any]) -> DeviceInfo:
     model = str(meta.get("type") or meta.get("hardware") or "Apex").strip() or "Apex"
     name = str(meta.get("hostname") or f"Apex ({host})")
 
-    identifiers = {(DOMAIN, serial or host)}
+    identifiers = {(DOMAIN, device_identifier)}
     return DeviceInfo(
         identifiers=identifiers,
         name=name,
@@ -428,6 +456,83 @@ def _build_device_info(*, host: str, meta: dict[str, Any]) -> DeviceInfo:
         sw_version=(str(meta.get("software") or "").strip() or None),
         configuration_url=f"http://{host}",
     )
+
+
+class ApexRestDebugSensor(SensorEntity):
+    """Single minimal sensor to validate REST status parsing."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: ApexNeptuneDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__()
+        self._coordinator = coordinator
+        self._entry = entry
+
+        host = str(entry.data.get(CONF_HOST, ""))
+        meta_any = (coordinator.data or {}).get("meta", {})
+        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+
+        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        self._attr_unique_id = f"{serial}_rest_debug_keys".lower()
+        self._attr_name = "REST Status Keys"
+        self._attr_device_info = _build_device_info(
+            host=host,
+            meta=meta,
+            device_identifier=coordinator.device_identifier,
+        )
+
+        self._refresh_attrs()
+
+    def _refresh_attrs(self) -> None:
+        data = self._coordinator.data or {}
+        meta_any = data.get("meta", {})
+        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        source = str(meta.get("source") or "").strip().lower()
+
+        # Only report available when REST is the current data source.
+        self._attr_available = (
+            bool(getattr(self._coordinator, "last_update_success", True))
+            and source == "rest"
+        )
+
+        raw_any = data.get("raw")
+        raw = cast(dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+        self._attr_native_value = len(raw) if self._attr_available else None
+
+        probes_any = data.get("probes")
+        probes_count = (
+            len(cast(dict[str, Any], probes_any)) if isinstance(probes_any, dict) else 0
+        )
+        outlets_any = data.get("outlets")
+        outlets_count = (
+            len(cast(list[Any], outlets_any)) if isinstance(outlets_any, list) else 0
+        )
+
+        self._attr_extra_state_attributes = {
+            "source": source or None,
+            "raw_top_level_keys": sorted(list(raw.keys()))[:30],
+            "probe_count": probes_count,
+            "outlet_count": outlets_count,
+        }
+
+    def _handle_coordinator_update(self) -> None:
+        self._refresh_attrs()
+
+        # Only write state once the entity is added to hass.
+        if getattr(self, "hass", None) is not None:
+            self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+        self._handle_coordinator_update()
 
 
 class ApexDiagnosticSensor(SensorEntity):
@@ -468,7 +573,11 @@ class ApexDiagnosticSensor(SensorEntity):
         self._attr_unique_id = unique_id
         self._attr_name = name
         self._attr_native_unit_of_measurement = native_unit
-        self._attr_device_info = _build_device_info(host=host, meta=meta)
+        self._attr_device_info = _build_device_info(
+            host=host,
+            meta=meta,
+            device_identifier=coordinator.device_identifier,
+        )
 
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
@@ -535,7 +644,11 @@ class ApexProbeSensor(SensorEntity):
         self._attr_unique_id = f"{serial}_probe_{ref.key}".lower()
         self._attr_name = ref.name
 
-        self._attr_device_info = _build_device_info(host=host, meta=meta)
+        self._attr_device_info = _build_device_info(
+            host=host,
+            meta=meta,
+            device_identifier=coordinator.device_identifier,
+        )
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
         )
@@ -647,7 +760,11 @@ class ApexOutletStatusSensor(SensorEntity):
         self._attr_unique_id = f"{serial}_outlet_{ref.did}".lower()
         self._attr_name = ref.name
 
-        self._attr_device_info = _build_device_info(host=host, meta=meta)
+        self._attr_device_info = _build_device_info(
+            host=host,
+            meta=meta,
+            device_identifier=coordinator.device_identifier,
+        )
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
         )
