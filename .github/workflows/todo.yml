@@ -1,5 +1,9 @@
 name: "Run TODO to Issue"
-on: ["push"]
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 jobs:
   build:
     runs-on: "ubuntu-latest"
@@ -7,24 +11,28 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: "actions/checkout@v4"
-      - name: "TODO to Issue"
-        uses: "alstr/todo-to-issue-action@v5"
-        with:
-          AUTO_ASSIGN: "true"
-          INSERT_ISSUE_URLS: "true"
-          CLOSE_ISSUES: "true"
-      - name: Set Git user
+
+      - name: Sync TODOs → GitHub issues
+        env:
+          # Uses your PAT (same secret used by the clone-count workflow).
+          # This avoids permission/behavior differences vs the built-in Actions token.
+          GITHUB_TOKEN: ${{ secrets.SECRET_TOKEN }}
         run: |
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-      - name: Commit and Push Changes
+          python3 .github/scripts/todo_sync.py
+
+      - name: Commit and push inserted issue links
         run: |
           git add -A
-          if [[ `git status --porcelain` ]]; then
-            git commit -m "Automatically added GitHub issue links to TODOs"
-            git push origin main
-          else
+          if git diff --cached --quiet; then
             echo "No changes to commit"
+            exit 0
           fi
+
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          git commit -m "chore(todo): sync TODO issue links"
+          git push origin HEAD:main
