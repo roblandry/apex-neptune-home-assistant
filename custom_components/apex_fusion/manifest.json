@@ -5,9 +5,9 @@
     "@roblandry"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/roblandry/apex-neptune-home-assistant",
+  "documentation": "https://github.com/roblandry/apex-fusion-home-assistant",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/roblandry/apex-neptune-home-assistant/issues",
+  "issue_tracker": "https://github.com/roblandry/apex-fusion-home-assistant/issues",
   "loggers": [
     "apex_fusion"
   ],

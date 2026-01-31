@@ -1,10 +1,10 @@
 
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
-[![GH Release](https://img.shields.io/github/v/release/roblandry/apex-neptune-home-assistant?sort=semver)](https://github.com/roblandry/apex-neptune-home-assistant/releases)
-[![GH Last Commit](https://img.shields.io/github/last-commit/roblandry/apex-neptune-home-assistant?logo=github)](https://github.com/roblandry/apex-neptune-home-assistant/commits/main)
-[![Codecov](https://codecov.io/gh/roblandry/apex-neptune-home-assistant/branch/main/graph/badge.svg)](https://codecov.io/gh/roblandry/apex-neptune-home-assistant)
+[![GH Release](https://img.shields.io/github/v/release/roblandry/apex-fusion-home-assistant?sort=semver)](https://github.com/roblandry/apex-fusion-home-assistant/releases)
+[![GH Last Commit](https://img.shields.io/github/last-commit/roblandry/apex-fusion-home-assistant?logo=github)](https://github.com/roblandry/apex-fusion-home-assistant/commits/main)
+[![Codecov](https://codecov.io/gh/roblandry/apex-fusion-home-assistant/branch/main/graph/badge.svg)](https://codecov.io/gh/roblandry/apex-fusion-home-assistant)
 [![GitHub Clones](https://img.shields.io/badge/dynamic/json?color=success&label=Clone&query=count&url=https://gist.githubusercontent.com/roblandry/90aeef6ae32b7dd94f74f067de2277fb/raw/clone.json&logo=github)](https://github.com/MShawon/github-clone-count-badge)
-![GH Code Size](https://img.shields.io/github/languages/code-size/roblandry/apex-neptune-home-assistant)
+![GH Code Size](https://img.shields.io/github/languages/code-size/roblandry/apex-fusion-home-assistant)
 [![BuyMeCoffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-donate-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/roblandry)
 
 # Apex Fusion (Local)
