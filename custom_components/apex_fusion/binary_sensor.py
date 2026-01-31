@@ -213,6 +213,10 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
 
     Controller values are 0/1. For Home Assistant's `opening` device class,
     `on` means OPEN and `off` means CLOSED.
+
+    On Apex controllers, digital inputs commonly report:
+    - 0 => OPEN (no continuity)
+    - 1 => CLOSED (continuity)
     """
 
     _attr_has_entity_name = True
@@ -269,7 +273,8 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
 
         v = _as_int_0_1(raw)
         # HA convention for `opening`: True means OPEN.
-        self._attr_is_on = (v == 1) if v is not None else None
+        # Apex digital inputs: 0=open, 1=closed.
+        self._attr_is_on = (v == 0) if v is not None else None
 
         self._attr_extra_state_attributes = {
             "value": raw,

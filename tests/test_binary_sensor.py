@@ -99,8 +99,8 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
         ent.async_write_ha_state = lambda *args, **kwargs: None
         await ent.async_added_to_hass()
 
-    # For device_class=openings: 0 -> off/closed
-    assert digital._attr_is_on is False
+    # For device_class=openings: 0 -> on/open
+    assert digital._attr_is_on is True
 
     # Drive coordinator update branches: bool, int->bool, and unsupported -> None.
     coordinator.last_update_success = False
@@ -112,8 +112,8 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
     for ent in added:
         ent._handle_coordinator_update()
 
-    # For device_class=openings: 1 -> on/open
-    assert digital._attr_is_on is True
+    # For device_class=openings: 1 -> off/closed
+    assert digital._attr_is_on is False
 
     # Cover branch where network section is not a dict.
     coordinator.data["network"] = "nope"

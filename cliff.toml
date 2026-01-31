@@ -3,14 +3,30 @@
 
 [changelog]
 header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n"
-body = "{% if version %}## {{ version }}{% else %}## Unreleased{% endif %}\n\n{% if commits | length > 0 %}{% for group, commits in commits | group_by(attribute=\"group\") %}### {{ group }}\n{% for commit in commits %}{% set msg = commit.message | trim %}{% set parts = msg | split(pat=\": \") %}- {% if parts | length > 1 %}{{ parts | slice(start=1) | join(sep=\": \") }}{% else %}{{ msg }}{% endif %}\n{% endfor %}\n{% endfor %}{% else %}- No changes\n{% endif %}"
+body = "{% if version %}## {{ version }}{% else %}## Unreleased{% endif %}\n\n{% if commits | length > 0 %}{% for group, commits in commits | group_by(attribute=\"group\") %}### {{ group }}\n\n{% for commit in commits %}{% set msg = commit.message | trim %}{% set parts = msg | split(pat=\": \") %}- {% if parts | length > 1 %}{{ parts | slice(start=1) | join(sep=\": \") }}{% else %}{{ msg }}{% endif %}\n{% endfor %}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}- No changes\n{% endif %}"
 trim = true
 
 [git]
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
-commit_preprocessors = [{ pattern = "\\(#([0-9]+)\\)$", replace = "" }]
+commit_preprocessors = [
+  # Drop trailing PR references like "(#123)" from the rendered message.
+  { pattern = "\\(#([0-9]+)\\)$", replace = "" },
+  # Keep only the first line (git subject). Commit bodies often contain
+  # additional markdown/text that breaks list formatting.
+  { pattern = "[\\r\\n][\\s\\S]*$", replace = "" },
+  { pattern = "\\s{2,}", replace = " " },
+  # Normalize historical commits that predate Conventional Commits so git-cliff
+  # doesn't warn during release generation.
+  #
+  # Note: git-cliff uses Rust regex; lookarounds are not supported. To avoid that,
+  # we do this in two passes:
+  #  1) prefix everything with "chore: "
+  #  2) remove that prefix again if the original message was already conventional
+  { pattern = "^(.*)$", replace = "chore: $1" },
+  { pattern = "^chore:\\s*((?:feat|fix|perf|refactor|docs|test|ci|build|chore|style|revert)(?:\\([^)]*\\))?:\\s.*)$", replace = "$1" },
+]
 
 # Map conventional commit types to changelog groups
 commit_parsers = [
