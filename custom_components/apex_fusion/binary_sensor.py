@@ -269,7 +269,7 @@ async def async_setup_entry(
         ref = _BinaryRef(
             key="trident_waste_full",
             name=f"{trident_prefix}Waste Full".strip(),
-            icon="mdi:trash-can-alert",
+            icon="mdi:cup-off",
             value_fn=_trident_waste_full,
         )
         tank_slug = slugify(str(entry.title or "tank").strip())
