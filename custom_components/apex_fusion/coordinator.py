@@ -706,7 +706,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
                 continue
             extra = cast(dict[str, Any], extra_any)
 
-            # TODO: Identify ACTUAL Triden NP hwtype; requires dump
+            # TODO: Identify ACTUAL Triden NP hwtype; requires dump (Issue: https://github.com/roblandry/apex-fusion-home-assistant/issues/4)
             # Only treat explicitly-known hardware types as Trident-family.
             # Avoid heuristic detection to prevent false positives across different
             # firmware families/modules.
