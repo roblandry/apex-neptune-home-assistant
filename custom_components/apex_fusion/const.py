@@ -55,3 +55,48 @@ MODULE_HWTYPE_FRIENDLY_NAMES: Final[dict[str, str]] = {
     "TRI": "Trident",
     "TNP": "Trident NP",
 }
+
+# Icons
+
+# Network / diagnostics
+ICON_IP_NETWORK: Final[str] = "mdi:ip-network"
+ICON_ROUTER_NETWORK: Final[str] = "mdi:router-network"
+ICON_IP_NETWORK_OUTLINE: Final[str] = "mdi:ip-network-outline"
+ICON_WIFI_SETTINGS: Final[str] = "mdi:wifi-settings"
+ICON_WIFI_STRENGTH_4: Final[str] = "mdi:wifi-strength-4"
+ICON_SIGNAL: Final[str] = "mdi:signal"
+ICON_ALERT_CIRCLE_OUTLINE: Final[str] = "mdi:alert-circle-outline"
+ICON_LAN_CONNECT: Final[str] = "mdi:lan-connect"
+ICON_WIFI: Final[str] = "mdi:wifi"
+ICON_BUG_OUTLINE: Final[str] = "mdi:bug-outline"
+
+# Trident
+ICON_FLASK_OUTLINE: Final[str] = "mdi:flask-outline"
+ICON_BEAKER_OUTLINE: Final[str] = "mdi:beaker-outline"
+ICON_TRASH_CAN_OUTLINE: Final[str] = "mdi:trash-can-outline"
+ICON_CUP_OFF: Final[str] = "mdi:cup-off"
+ICON_FLASK_EMPTY: Final[str] = "mdi:flask-empty"
+ICON_FLASK_EMPTY_PLUS_OUTLINE: Final[str] = "mdi:flask-empty-plus-outline"
+ICON_CUP_OUTLINE: Final[str] = "mdi:cup-outline"
+ICON_CUP_WATER: Final[str] = "mdi:cup-water"
+ICON_TEST_TUBE: Final[str] = "mdi:test-tube"
+
+# Probes
+ICON_THERMOMETER: Final[str] = "mdi:thermometer"
+ICON_PH: Final[str] = "mdi:ph"
+ICON_SHAKER_OUTLINE: Final[str] = "mdi:shaker-outline"
+ICON_FLASH: Final[str] = "mdi:flash"
+ICON_CURRENT_AC: Final[str] = "mdi:current-ac"
+ICON_FLASK: Final[str] = "mdi:flask"
+ICON_GAUGE: Final[str] = "mdi:gauge"
+
+# Outlets / controls
+ICON_PUMP: Final[str] = "mdi:pump"
+ICON_LIGHTBULB: Final[str] = "mdi:lightbulb"
+ICON_RADIATOR: Final[str] = "mdi:radiator"
+ICON_POWER_SOCKET_US: Final[str] = "mdi:power-socket-us"
+ICON_ALARM: Final[str] = "mdi:alarm"
+ICON_TOGGLE_SWITCH_OUTLINE: Final[str] = "mdi:toggle-switch-outline"
+ICON_BRIGHTNESS_PERCENT: Final[str] = "mdi:brightness-percent"
+ICON_REFRESH: Final[str] = "mdi:refresh"
+ICON_SHAKER: Final[str] = "mdi:shaker"

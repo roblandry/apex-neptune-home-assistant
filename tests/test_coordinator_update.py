@@ -697,7 +697,7 @@ async def test_rest_login_unauthorized_raises_auth_failed(
     session.queue_get(_Resp(401, "{}"))
     # Login rejected.
     session.queue_post(_Resp(401, "{}"))
-    # REST rejected -> coordinator falls back to legacy JSON, which rejects auth.
+    # REST rejected -> coordinator falls back to the CGI JSON endpoint, which rejects auth.
     session.queue_get(_Resp(401, "{}"))
 
     coord = await _make_coordinator(hass, host="1.2.3.4")
@@ -716,16 +716,16 @@ async def test_rest_login_unauthorized_raises_auth_failed(
             await coord._async_update_data()
 
 
-async def test_rest_status_unauthorized_falls_back_to_legacy_json(
+async def test_rest_status_unauthorized_falls_back_to_cgi_json(
     hass, enable_custom_integrations
 ):
     session = _Session()
     # no-login status probe first
     session.queue_get(_Resp(401, "{}"))
     session.queue_post(_Resp(200, "{}", cookies={"connect.sid": "abc"}))
-    # REST status unauthorized -> fall back to legacy.
+    # REST status unauthorized -> fall back to the CGI JSON endpoint.
     session.queue_get(_Resp(401, "{}"))
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -750,7 +750,7 @@ async def test_rest_status_unauthorized_falls_back_to_legacy_json(
     assert data["meta"]["source"] == "cgi_json"
 
 
-async def test_rest_transient_error_retries_then_falls_back_to_legacy_json(
+async def test_rest_transient_error_retries_then_falls_back_to_cgi_json(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -763,7 +763,7 @@ async def test_rest_transient_error_retries_then_falls_back_to_legacy_json(
     # Second REST login attempt: REST not supported -> fallback.
     session.queue_post(_Resp(404, "{}"))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -792,7 +792,7 @@ async def test_rest_transient_error_retries_then_falls_back_to_legacy_json(
     assert data["meta"]["source"] == "cgi_json"
 
 
-async def test_legacy_json_404_falls_back_to_xml(hass, enable_custom_integrations):
+async def test_cgi_json_404_falls_back_to_xml(hass, enable_custom_integrations):
     session = _Session()
 
     # no-login status probe first
@@ -801,10 +801,10 @@ async def test_legacy_json_404_falls_back_to_xml(hass, enable_custom_integration
     # REST not supported.
     session.queue_post(_Resp(404, "{}"))
 
-    # legacy json 404
+    # CGI JSON endpoint 404
     session.queue_get(_Resp(404, "{}"))
 
-    # xml success
+    # XML status endpoint success
     session.queue_get(
         _Resp(
             200,
@@ -830,7 +830,7 @@ async def test_legacy_json_404_falls_back_to_xml(hass, enable_custom_integration
     assert data["meta"]["source"] == "xml"
 
 
-async def test_legacy_json_unauthorized_raises_auth_failed(
+async def test_cgi_json_unauthorized_raises_auth_failed(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -841,7 +841,7 @@ async def test_legacy_json_unauthorized_raises_auth_failed(
     # REST not supported.
     session.queue_post(_Resp(404, "{}"))
 
-    # legacy json 401
+    # CGI JSON endpoint 401
     session.queue_get(_Resp(401, "{}"))
 
     coord = await _make_coordinator(hass, host="1.2.3.4")
@@ -860,7 +860,7 @@ async def test_legacy_json_unauthorized_raises_auth_failed(
             await coord._async_update_data()
 
 
-async def test_legacy_xml_parse_error_raises_update_failed(
+async def test_status_xml_parse_error_raises_update_failed(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -871,10 +871,10 @@ async def test_legacy_xml_parse_error_raises_update_failed(
     # REST not supported.
     session.queue_post(_Resp(404, "{}"))
 
-    # legacy json 404
+    # CGI JSON endpoint 404
     session.queue_get(_Resp(404, "{}"))
 
-    # xml invalid
+    # XML status endpoint invalid payload
     session.queue_get(_Resp(200, "<bad", headers={"Content-Type": "application/xml"}))
 
     coord = await _make_coordinator(hass, host="1.2.3.4")
@@ -966,7 +966,7 @@ async def test_rest_exhausts_retries_and_raises_update_failed(
     session.queue_post(aiohttp.ClientError("boom"))
     session.queue_post(aiohttp.ClientError("boom"))
 
-    # After REST fails, legacy JSON also fails to force final XML.
+    # After REST fails, CGI JSON also fails to force final XML.
     session.queue_get(aiohttp.ClientError("boom"))
     session.queue_get(aiohttp.ClientError("boom"))
 
@@ -990,7 +990,7 @@ async def test_rest_exhausts_retries_and_raises_update_failed(
             await coord._async_update_data()
 
 
-async def test_rest_disabled_until_skips_rest_and_falls_back_to_legacy_json(
+async def test_rest_disabled_until_skips_rest_and_falls_back_to_cgi_json(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -1090,7 +1090,7 @@ async def test_rest_rate_limited_on_no_login_probe_falls_back_to_legacy_json(
     # no-login REST status probe returns 429 with Retry-After
     session.queue_get(_Resp(429, "{}", headers={"Retry-After": "3"}))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1126,7 +1126,7 @@ async def test_rest_rate_limited_on_login_sets_backoff_and_falls_back(
     # login 429 with invalid Retry-After -> default backoff
     session.queue_post(_Resp(429, "{}", headers={"Retry-After": "bogus"}))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1206,7 +1206,7 @@ async def test_rest_rate_limited_without_retry_after_uses_default_backoff(
     # no-login REST status probe returns 429 with no Retry-After header
     session.queue_get(_Resp(429, "{}", headers={"Content-Type": "application/json"}))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1229,7 +1229,7 @@ async def test_rest_rate_limited_without_retry_after_uses_default_backoff(
         data = await coord._async_update_data()
 
     assert data["meta"]["source"] == "cgi_json"
-    # No-login rate limiting currently falls back to legacy without disabling REST.
+    # No-login rate limiting currently falls back to CGI JSON without disabling REST.
     assert coord._rest_disabled_until == 0.0
 
 
@@ -1247,7 +1247,7 @@ async def test_rest_rate_limited_with_blank_retry_after(
         )
     )
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1272,7 +1272,7 @@ async def test_rest_rate_limited_with_blank_retry_after(
     assert data["meta"]["source"] == "cgi_json"
 
 
-async def test_rest_status_transient_error_falls_back_to_legacy(
+async def test_rest_status_transient_error_falls_back_to_cgi_json(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -1280,7 +1280,7 @@ async def test_rest_status_transient_error_falls_back_to_legacy(
     # no-login status probe returns transient HTTP error (e.g. 503)
     session.queue_get(_Resp(503, "{}"))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1342,7 +1342,7 @@ async def test_rest_login_cookie_jar_sid_is_used(hass, enable_custom_integration
     assert data["meta"]["source"] == "rest"
 
 
-async def test_rest_login_body_invalid_json_falls_back_to_legacy(
+async def test_rest_login_body_invalid_json_falls_back_to_cgi_json(
     hass, enable_custom_integrations
 ):
     session = _Session()
@@ -1353,7 +1353,7 @@ async def test_rest_login_body_invalid_json_falls_back_to_legacy(
     # Login response body isn't JSON; no cookies either.
     session.queue_post(_Resp(200, "{no"))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1386,7 +1386,7 @@ async def test_rest_cached_sid_status_404_triggers_not_supported_and_fallback(
     # Cached SID attempt: status 404 => not supported.
     session.queue_get(_Resp(404, "{}"))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1488,7 +1488,7 @@ async def test_rest_non_transient_http_error_falls_back(
     # Login returns non-transient error (400)
     session.queue_post(_Resp(400, "{}"))
 
-    # Legacy CGI JSON success.
+    # CGI JSON endpoint success.
     session.queue_get(
         _Resp(
             200,
@@ -1618,16 +1618,16 @@ async def test_rest_mconf_invalid_json_is_logged_and_ignored(
     assert data["meta"]["source"] == "rest"
 
 
-async def test_legacy_json_invalid_body_logs_and_falls_back_to_xml(
+async def test_cgi_json_invalid_body_logs_and_falls_back_to_xml(
     hass, enable_custom_integrations
 ):
     session = _Session()
 
     # no password: skip REST
-    # legacy json 200 but invalid json
+    # CGI JSON endpoint 200 but invalid JSON
     session.queue_get(_Resp(200, "{no"))
 
-    # xml success
+    # XML status endpoint success
     session.queue_get(
         _Resp(
             200,
@@ -1653,13 +1653,13 @@ async def test_legacy_json_invalid_body_logs_and_falls_back_to_xml(
     assert data["meta"]["source"] == "xml"
 
 
-async def test_legacy_xml_unauthorized_logs_and_raises_auth_failed(
+async def test_status_xml_unauthorized_logs_and_raises_auth_failed(
     hass, enable_custom_integrations
 ):
     session = _Session()
 
     # no password: skip REST
-    # legacy json 404 -> fall back to xml
+    # CGI JSON endpoint 404 -> fall back to XML status endpoint
     session.queue_get(_Resp(404, "{}"))
     # xml unauthorized
     session.queue_get(
@@ -1682,11 +1682,11 @@ async def test_legacy_xml_unauthorized_logs_and_raises_auth_failed(
             await coord._async_update_data()
 
 
-async def test_legacy_xml_update_failed_reraises(hass, enable_custom_integrations):
+async def test_status_xml_update_failed_reraises(hass, enable_custom_integrations):
     session = _Session()
 
     # no password: skip REST
-    # legacy json 404 -> fall back to xml
+    # CGI JSON endpoint 404 -> fall back to XML status endpoint
     session.queue_get(_Resp(404, "{}"))
     session.queue_get(
         _Resp(

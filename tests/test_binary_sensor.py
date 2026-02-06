@@ -11,30 +11,30 @@ from custom_components.apex_fusion.const import CONF_HOST, DOMAIN
 
 
 def test_binary_sensor_int_coercion_helpers_cover_branches():
-    from custom_components.apex_fusion import binary_sensor
+    from custom_components.apex_fusion.apex_fusion.inputs import DigitalValueCodec
 
-    assert binary_sensor._as_int_0_1(False) == 0
-    assert binary_sensor._as_int_0_1(True) == 1
-    assert binary_sensor._as_int_0_1(0) == 0
-    assert binary_sensor._as_int_0_1(1) == 1
-    assert binary_sensor._as_int_0_1(2) is None
-    assert binary_sensor._as_int_0_1(100) == 1
-    assert binary_sensor._as_int_0_1(200) == 0
-    assert binary_sensor._as_int_0_1(0.0) == 0
-    assert binary_sensor._as_int_0_1(1.0) == 1
-    assert binary_sensor._as_int_0_1(0.5) is None
-    assert binary_sensor._as_int_0_1("0") == 0
-    assert binary_sensor._as_int_0_1(" 1 ") == 1
-    assert binary_sensor._as_int_0_1("100") == 1
-    assert binary_sensor._as_int_0_1("200") == 0
-    assert binary_sensor._as_int_0_1("nope") is None
-    assert binary_sensor._as_int_0_1(object()) is None
+    assert DigitalValueCodec.as_int_0_1(False) == 0
+    assert DigitalValueCodec.as_int_0_1(True) == 1
+    assert DigitalValueCodec.as_int_0_1(0) == 0
+    assert DigitalValueCodec.as_int_0_1(1) == 1
+    assert DigitalValueCodec.as_int_0_1(2) is None
+    assert DigitalValueCodec.as_int_0_1(100) == 1
+    assert DigitalValueCodec.as_int_0_1(200) == 0
+    assert DigitalValueCodec.as_int_0_1(0.0) == 0
+    assert DigitalValueCodec.as_int_0_1(1.0) == 1
+    assert DigitalValueCodec.as_int_0_1(0.5) is None
+    assert DigitalValueCodec.as_int_0_1("0") == 0
+    assert DigitalValueCodec.as_int_0_1(" 1 ") == 1
+    assert DigitalValueCodec.as_int_0_1("100") == 1
+    assert DigitalValueCodec.as_int_0_1("200") == 0
+    assert DigitalValueCodec.as_int_0_1("nope") is None
+    assert DigitalValueCodec.as_int_0_1(object()) is None
 
 
 def test_trident_reagent_empty_extractor_returns_bool():
-    from custom_components.apex_fusion import binary_sensor
+    from custom_components.apex_fusion.apex_fusion.trident import trident_reagent_empty
 
-    fn = binary_sensor._trident_reagent_empty("reagent_a_empty")
+    fn = trident_reagent_empty("reagent_a_empty")
     assert fn({"trident": {"reagent_a_empty": True}}) is True
 
 

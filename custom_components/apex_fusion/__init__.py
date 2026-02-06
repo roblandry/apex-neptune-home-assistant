@@ -1,7 +1,7 @@
 """The Apex Fusion (Local) integration.
 
 This integration communicates with Neptune Apex controllers over the local
-network, using REST when available and falling back to legacy status.xml.
+network.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
 
+from .apex_fusion import ApexFusionContext
 from .const import CONF_HOST, DOMAIN, LOGGER_NAME, PLATFORMS
-from .coordinator import ApexNeptuneDataUpdateCoordinator, clean_hostname_display
+from .coordinator import ApexNeptuneDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
 
@@ -25,11 +26,19 @@ async def _async_prefix_entity_ids_with_tank(
     *,
     tank_slug: str,
 ) -> None:
-    """Ensure entity_ids are tank-prefixed for an existing install.
+    """Ensure entity_ids are tank-prefixed.
 
-    Home Assistant only uses `suggested_object_id` when an entity is first
-    created. For existing entity registry entries, we rename them once so they
+    Home Assistant uses `suggested_object_id` only when an entity is first
+    created. This helper updates entity registry entries so their object ids
     include the tank slug.
+
+    Args:
+        hass: Home Assistant instance.
+        entry: Config entry.
+        tank_slug: Slug used to prefix object ids.
+
+    Returns:
+        None.
     """
 
     if not tank_slug:
@@ -133,12 +142,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Ensure tank slug shows up in entity_ids even when entities already exist.
-    hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-    tank_slug = slugify(
-        hostname_disp
-        or str(meta.get("hostname") or "").strip()
-        or str(entry.title or "tank").strip()
-    )
+    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    tank_slug = ctx.tank_slug_with_entry_title(entry.title)
     await _async_prefix_entity_ids_with_tank(hass, entry, tank_slug=tank_slug)
 
     return True

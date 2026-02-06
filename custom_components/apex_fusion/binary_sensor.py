@@ -19,13 +19,29 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import slugify
 
-from .const import CONF_HOST, DOMAIN
+from .apex_fusion import ApexFusionContext
+from .apex_fusion.discovery import ApexDiscovery, DigitalProbeRef
+from .apex_fusion.inputs import DigitalValueCodec
+from .apex_fusion.network import network_bool
+from .apex_fusion.trident import (
+    trident_is_testing,
+    trident_reagent_empty,
+    trident_waste_full,
+)
+from .const import (
+    DOMAIN,
+    ICON_CUP_OFF,
+    ICON_FLASK_EMPTY,
+    ICON_LAN_CONNECT,
+    ICON_TEST_TUBE,
+    ICON_TOGGLE_SWITCH_OUTLINE,
+    ICON_WIFI,
+)
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_aquabus_child_device_info_from_data,
     build_device_info,
     build_trident_device_info,
-    clean_hostname_display,
 )
 
 
@@ -39,100 +55,21 @@ class _BinaryRef:
     value_fn: Callable[[dict[str, Any]], bool | None]
 
 
-@dataclass(frozen=True)
-class _DigitalProbeRef:
-    key: str
-    name: str
-
-
-def _as_int_0_1(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, int):
-        if value in (0, 1):
-            return value
-        # Some firmwares/devices encode digital states as 100/200.
-        # Normalize to 0/1 to keep `opening` behavior consistent.
-        if value == 100:
-            return 1
-        if value == 200:
-            return 0
-        return None
-    if isinstance(value, float):
-        if value in (0.0, 1.0):
-            return int(value)
-        return None
-    if isinstance(value, str):
-        t = value.strip()
-        if t in {"0", "1"}:
-            return int(t)
-        if t == "100":
-            return 1
-        if t == "200":
-            return 0
-        return None
-    return None
-
-
-def _network_bool(field: str) -> Callable[[dict[str, Any]], bool | None]:
-    """Return a function that extracts a boolean-ish network field."""
-
-    def _get(data: dict[str, Any]) -> bool | None:
-        network_any: Any = data.get("network")
-        if not isinstance(network_any, dict):
-            return None
-        network = cast(dict[str, Any], network_any)
-        value: Any = network.get(field)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, int):
-            return bool(value)
-        return None
-
-    return _get
-
-
-def _trident_is_testing(data: dict[str, Any]) -> bool | None:
-    trident_any: Any = data.get("trident")
-    if not isinstance(trident_any, dict):
-        return None
-    trident = cast(dict[str, Any], trident_any)
-    value: Any = trident.get("is_testing")
-    if isinstance(value, bool):
-        return value
-    return None
-
-
-def _trident_waste_full(data: dict[str, Any]) -> bool | None:
-    trident_any: Any = data.get("trident")
-    if not isinstance(trident_any, dict):
-        return None
-    trident = cast(dict[str, Any], trident_any)
-    value: Any = trident.get("waste_full")
-    if isinstance(value, bool):
-        return value
-    return None
-
-
-def _trident_reagent_empty(field: str) -> Callable[[dict[str, Any]], bool | None]:
-    def _get(data: dict[str, Any]) -> bool | None:
-        trident_any: Any = data.get("trident")
-        if not isinstance(trident_any, dict):
-            return None
-        trident = cast(dict[str, Any], trident_any)
-        value: Any = trident.get(field)
-        if isinstance(value, bool):
-            return value
-        return None
-
-    return _get
-
-
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up Apex Fusion binary sensors from a config entry."""
+    """Set up Apex Fusion binary sensors from a config entry.
+
+    Args:
+        hass: Home Assistant instance.
+        entry: Config entry.
+        async_add_entities: Callback used to register entities.
+
+    Returns:
+        None.
+    """
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
     added_digital_keys: set[str] = set()
 
@@ -140,14 +77,14 @@ async def async_setup_entry(
         _BinaryRef(
             key="dhcp",
             name="DHCP Enabled",
-            icon="mdi:lan-connect",
-            value_fn=_network_bool("dhcp"),
+            icon=ICON_LAN_CONNECT,
+            value_fn=network_bool("dhcp"),
         ),
         _BinaryRef(
             key="wifi_enable",
             name="Wi-Fi Enabled",
-            icon="mdi:wifi",
-            value_fn=_network_bool("wifi_enable"),
+            icon=ICON_WIFI,
+            value_fn=network_bool("wifi_enable"),
         ),
     ]
 
@@ -157,36 +94,16 @@ async def async_setup_entry(
 
     def _add_digital_probe_entities() -> None:
         data = coordinator.data or {}
-        probes_any: Any = data.get("probes")
-        if not isinstance(probes_any, dict):
-            return
-        probes = cast(dict[str, Any], probes_any)
-
-        new_entities: list[BinarySensorEntity] = []
-
-        for key, probe_any in probes.items():
-            key_str = str(key)
-            if not key_str or key_str in added_digital_keys:
-                continue
-            if not isinstance(probe_any, dict):
-                continue
-            probe = cast(dict[str, Any], probe_any)
-            probe_type = str(probe.get("type") or "").strip().lower()
-            if probe_type != "digital":
-                continue
-            probe_name = str(probe.get("name") or key_str).strip() or key_str
-            friendly = probe_name.replace("_", " ").strip()
-            new_entities.append(
-                ApexDigitalProbeBinarySensor(
-                    coordinator,
-                    entry,
-                    ref=_DigitalProbeRef(key=key_str, name=friendly),
-                )
-            )
-            added_digital_keys.add(key_str)
-
+        refs, seen_keys = ApexDiscovery.new_digital_probe_refs(
+            data,
+            already_added_keys=added_digital_keys,
+        )
+        new_entities: list[BinarySensorEntity] = [
+            ApexDigitalProbeBinarySensor(coordinator, entry, ref=ref) for ref in refs
+        ]
         if new_entities:
             async_add_entities(new_entities)
+        added_digital_keys.update(seen_keys)
 
     _add_digital_probe_entities()
     remove = coordinator.async_add_listener(_add_digital_probe_entities)
@@ -203,14 +120,10 @@ async def async_setup_entry(
         if not isinstance(abaddr_any, int):
             return None
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-
         return build_trident_device_info(
-            host=host,
-            meta=meta,
-            controller_device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            controller_device_identifier=ctx.controller_device_identifier,
             trident_abaddr=abaddr_any,
             trident_hwtype=(str(trident.get("hwtype") or "").strip().upper() or None),
             trident_hwrev=(str(trident.get("hwrev") or "").strip() or None),
@@ -237,15 +150,10 @@ async def async_setup_entry(
         ref = _BinaryRef(
             key="trident_testing",
             name=f"{trident_prefix}Testing".strip(),
-            icon="mdi:test-tube",
-            value_fn=_trident_is_testing,
+            icon=ICON_TEST_TUBE,
+            value_fn=trident_is_testing,
         )
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-        )
+        tank_slug = ctx.tank_slug
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -288,15 +196,10 @@ async def async_setup_entry(
         ref = _BinaryRef(
             key="trident_waste_full",
             name=f"{trident_prefix}Waste Full".strip(),
-            icon="mdi:cup-off",
-            value_fn=_trident_waste_full,
+            icon=ICON_CUP_OFF,
+            value_fn=trident_waste_full,
         )
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-        )
+        tank_slug = ctx.tank_slug
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -342,29 +245,24 @@ async def async_setup_entry(
             _BinaryRef(
                 key="trident_reagent_a_empty",
                 name=f"{trident_prefix}Reagent A Empty".strip(),
-                icon="mdi:flask-empty",
-                value_fn=_trident_reagent_empty("reagent_a_empty"),
+                icon=ICON_FLASK_EMPTY,
+                value_fn=trident_reagent_empty("reagent_a_empty"),
             ),
             _BinaryRef(
                 key="trident_reagent_b_empty",
                 name=f"{trident_prefix}Reagent B Empty".strip(),
-                icon="mdi:flask-empty",
-                value_fn=_trident_reagent_empty("reagent_b_empty"),
+                icon=ICON_FLASK_EMPTY,
+                value_fn=trident_reagent_empty("reagent_b_empty"),
             ),
             _BinaryRef(
                 key="trident_reagent_c_empty",
                 name=f"{trident_prefix}Reagent C Empty".strip(),
-                icon="mdi:flask-empty",
-                value_fn=_trident_reagent_empty("reagent_c_empty"),
+                icon=ICON_FLASK_EMPTY,
+                value_fn=trident_reagent_empty("reagent_c_empty"),
             ),
         ]
 
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-        )
+        tank_slug = ctx.tank_slug
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -407,34 +305,26 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_device_class = BinarySensorDeviceClass.OPENING
-    _attr_icon = "mdi:toggle-switch-outline"
+    _attr_icon = ICON_TOGGLE_SWITCH_OUTLINE
 
     def __init__(
         self,
         coordinator: ApexNeptuneDataUpdateCoordinator,
         entry: ConfigEntry,
         *,
-        ref: _DigitalProbeRef,
+        ref: DigitalProbeRef,
     ) -> None:
         super().__init__()
         self._coordinator = coordinator
         self._entry = entry
         self._ref = ref
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        self._attr_unique_id = f"{serial}_digital_{ref.key}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_digital_{ref.key}".lower()
         self._attr_name = ref.name
 
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp
-            or str(meta.get("hostname") or "").strip()
-            or str(entry.title or "tank").strip()
-        )
+        tank_slug = ctx.tank_slug_with_entry_title(entry.title)
         key_slug = str(ref.key or "").strip().lower() or slugify(ref.name) or "di"
         self._attr_suggested_object_id = f"{tank_slug}_di_{key_slug}"
 
@@ -451,9 +341,9 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
 
         module_device_info: DeviceInfo | None = (
             build_aquabus_child_device_info_from_data(
-                host=host,
-                controller_meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                controller_meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 data=coordinator.data or {},
                 module_abaddr=module_abaddr,
                 module_hwtype_hint=module_hwtype_hint,
@@ -463,9 +353,9 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
         )
 
         self._attr_device_info = module_device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._attr_available = bool(
@@ -490,7 +380,7 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
         if raw is None:
             raw = probe.get("value_raw")
 
-        v = _as_int_0_1(raw)
+        v = DigitalValueCodec.as_int_0_1(raw)
         # HA convention for `opening`: True means OPEN.
         # Apex digital inputs: 0=open, 1=closed.
         self._attr_is_on = (v == 0) if v is not None else None
@@ -530,26 +420,31 @@ class ApexDiagnosticBinarySensor(BinarySensorEntity):
         device_info: DeviceInfo | None = None,
         suggested_object_id: str | None = None,
     ) -> None:
-        """Initialize the binary sensor."""
+        """Initialize the binary sensor.
+
+        Args:
+            coordinator: Data coordinator.
+            entry: Config entry.
+            ref: Binary sensor reference.
+            device_info: Optional device registry info.
+            suggested_object_id: Optional suggested object id for entity_id.
+        """
         super().__init__()
         self._coordinator = coordinator
         self._entry = entry
         self._ref = ref
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        self._attr_unique_id = f"{serial}_diag_bool_{ref.key}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_diag_bool_{ref.key}".lower()
         self._attr_name = ref.name
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
         self._attr_icon = ref.icon
         self._attr_device_info = device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._attr_available = bool(
@@ -558,7 +453,11 @@ class ApexDiagnosticBinarySensor(BinarySensorEntity):
         self._attr_is_on = self._read_value()
 
     def _read_value(self) -> bool | None:
-        """Read boolean state from coordinator."""
+        """Read boolean state from coordinator.
+
+        Returns:
+            Current boolean state, or None if unknown.
+        """
         data = self._coordinator.data or {}
         return self._ref.value_fn(data)
 
@@ -600,13 +499,10 @@ class ApexBinarySensor(ApexDiagnosticBinarySensor):
             suggested_object_id=suggested_object_id,
         )
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
         # Use a distinct unique_id prefix so entity ids differ from diagnostics.
-        self._attr_unique_id = f"{serial}_bool_{ref.key}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_bool_{ref.key}".lower()
 
 
 class ApexTridentWasteFullBinarySensor(ApexDiagnosticBinarySensor):

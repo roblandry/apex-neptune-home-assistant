@@ -109,7 +109,15 @@ async def test_rest_validation_uses_hostname_from_config_when_missing_in_status(
 
 
 async def test_user_flow_creates_entry(hass, enable_custom_integrations):
-    """User flow creates a config entry when validation succeeds."""
+    """User flow creates a config entry when validation succeeds.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
     with patch(
         "custom_components.apex_fusion.config_flow._async_validate_input",
         new=AsyncMock(return_value={"title": "Apex (1.2.3.4)", "unique_id": "1.2.3.4"}),
@@ -132,7 +140,15 @@ async def test_user_flow_creates_entry(hass, enable_custom_integrations):
 async def test_reauth_flow_is_supported_and_updates_entry(
     hass, enable_custom_integrations
 ):
-    """Reauth flow exists and updates stored credentials."""
+    """Reauth flow exists and updates stored credentials.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Apex (1.2.3.4)",
@@ -178,7 +194,15 @@ async def test_reauth_flow_is_supported_and_updates_entry(
 async def test_reconfigure_flow_is_supported_and_updates_entry(
     hass, enable_custom_integrations
 ):
-    """Reconfigure flow exists and updates stored host/credentials."""
+    """Reconfigure flow exists and updates stored host/credentials.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Apex (1.2.3.4)",
@@ -225,7 +249,15 @@ async def test_reconfigure_flow_is_supported_and_updates_entry(
 
 
 async def test_rest_validation_accepts_cookie_from_set_cookie(hass, aioclient_mock):
-    """REST validation sends connect.sid from Set-Cookie."""
+    """REST validation sends connect.sid from Set-Cookie.
+
+    Args:
+        hass: Home Assistant fixture.
+        aioclient_mock: Aiohttp client mock fixture.
+
+    Returns:
+        None.
+    """
     host = "1.2.3.4"
 
     aioclient_mock.post(
@@ -261,7 +293,15 @@ async def test_rest_validation_accepts_cookie_from_set_cookie(hass, aioclient_mo
 
 
 async def test_rest_validation_accepts_cookie_from_json_body(hass, aioclient_mock):
-    """REST validation sends connect.sid from JSON body."""
+    """REST validation sends connect.sid from JSON body.
+
+    Args:
+        hass: Home Assistant fixture.
+        aioclient_mock: Aiohttp client mock fixture.
+
+    Returns:
+        None.
+    """
     host = "1.2.3.4"
 
     aioclient_mock.post(
@@ -296,7 +336,18 @@ async def test_rest_validation_accepts_cookie_from_json_body(hass, aioclient_moc
 
 
 async def test_rest_validation_401_raises_invalid_auth(hass, aioclient_mock):
-    """REST validation raises InvalidAuth when login is unauthorized."""
+    """REST validation raises InvalidAuth when login is unauthorized.
+
+    Args:
+        hass: Home Assistant fixture.
+        aioclient_mock: Aiohttp client mock fixture.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: If InvalidAuth is not raised.
+    """
     host = "1.2.3.4"
 
     aioclient_mock.post(
@@ -305,8 +356,8 @@ async def test_rest_validation_401_raises_invalid_auth(hass, aioclient_mock):
         text="{}",
     )
 
-    # REST unauthorized should fall back to legacy XML; if that also fails auth,
-    # we still report InvalidAuth.
+    # REST unauthorized should fall back to the XML status endpoint; if that also
+    # fails auth, we still report InvalidAuth.
     aioclient_mock.get(
         f"http://{host}/cgi-bin/status.xml",
         status=401,
@@ -331,7 +382,18 @@ async def test_rest_validation_401_raises_invalid_auth(hass, aioclient_mock):
 async def test_rest_validation_reraises_invalid_auth_from_rest_block(
     hass, aioclient_mock
 ):
-    """Covers the defensive InvalidAuth re-raise inside the REST validation block."""
+    """Cover the defensive InvalidAuth re-raise inside REST validation.
+
+    Args:
+        hass: Home Assistant fixture.
+        aioclient_mock: Aiohttp client mock fixture.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: If InvalidAuth is not raised.
+    """
 
     host = "1.2.3.4"
 
@@ -440,7 +502,15 @@ async def test_xml_validation_parse_error_raises_cannot_connect(hass, aioclient_
 async def test_rest_login_rejected_for_all_candidates_falls_back_to_xml(
     hass, aioclient_mock
 ):
-    """Cover the logged_in=False path when all REST login candidates reject."""
+    """Cover the logged_in=False path when all REST login candidates reject.
+
+    Args:
+        hass: Home Assistant fixture.
+        aioclient_mock: Aiohttp client mock fixture.
+
+    Returns:
+        None.
+    """
 
     host = "1.2.3.4"
     aioclient_mock.post(
@@ -590,7 +660,7 @@ async def test_rest_status_unauthorized_raises_invalid_auth(hass, aioclient_mock
         status=401,
         text="{}",
     )
-    # REST rejected -> validation tries legacy XML; force legacy auth failure.
+    # REST rejected -> validation tries the XML status endpoint; force XML auth failure.
     aioclient_mock.get(
         f"http://{host}/cgi-bin/status.xml",
         status=401,
@@ -645,7 +715,15 @@ async def test_rest_status_transient_falls_back_to_xml(hass, aioclient_mock):
 async def test_rest_retries_on_client_error_then_succeeds(
     hass, enable_custom_integrations
 ):
-    """Cover the retry/sleep path in REST validation."""
+    """Cover the retry/sleep path in REST validation.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
 
     import aiohttp
 
@@ -738,7 +816,15 @@ async def test_rest_retries_on_client_error_then_succeeds(
 async def test_rest_login_body_invalid_json_is_ignored(
     hass, enable_custom_integrations
 ):
-    """Cover the login_body JSONDecodeError branch when no cookie is set."""
+    """Cover the login_body JSONDecodeError branch when no cookie is set.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
 
     from custom_components.apex_fusion import config_flow
 
@@ -812,7 +898,15 @@ async def test_rest_login_body_invalid_json_is_ignored(
 async def test_rest_exhausts_retry_loop_then_falls_back_to_xml(
     hass, enable_custom_integrations
 ):
-    """Cover raising CannotConnect after exhausting REST retry attempts."""
+    """Cover raising CannotConnect after exhausting REST retry attempts.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
 
     import aiohttp
 
@@ -861,7 +955,7 @@ async def test_rest_exhausts_retry_loop_then_falls_back_to_xml(
             raise aiohttp.ClientError("boom")
 
         def get(self, *_args, **_kwargs):
-            # Called for legacy XML fallback.
+            # Called for XML fallback.
             return _Resp(200, "<status></status>")
 
     async def _no_sleep(_secs: float):

@@ -82,10 +82,10 @@ class _Session:
 
 
 def test_switch_to_int_helper_covers_float_and_none():
-    from custom_components.apex_fusion.switch import _to_int
+    from custom_components.apex_fusion.apex_fusion.util import to_int
 
-    assert _to_int(2.0) == 2
-    assert _to_int("nope") is None
+    assert to_int(2.0) == 2
+    assert to_int("nope") is None
 
 
 async def test_switch_setup_entry_creates_four_feed_switches(
@@ -165,12 +165,12 @@ async def test_switch_turn_on_uses_rest_and_refreshes(
     assert kwargs["path"] == "/rest/status/feed/1"
     assert kwargs["payload"]["active"] == 1
 
-    # No legacy calls when REST succeeds.
+    # No CGI calls when REST succeeds.
     assert session.post_calls == []
     coordinator.async_request_refresh.assert_awaited()
 
 
-async def test_switch_rest_404_falls_back_to_legacy_cgi(
+async def test_switch_rest_404_falls_back_to_cgi(
     hass, enable_custom_integrations, monkeypatch
 ):
     entry = MockConfigEntry(
@@ -208,12 +208,12 @@ async def test_switch_rest_404_falls_back_to_legacy_cgi(
     assert session.post_calls
     call = session.post_calls[-1]
     assert call["url"].endswith("/cgi-bin/status.cgi")
-    assert "FeedSel=1" in str(call["data"])  # Feed B -> 1 in legacy mapping
+    assert "FeedSel=1" in str(call["data"])  # Feed B -> 1 in CGI parameter mapping
     assert isinstance(call["auth"], aiohttp.BasicAuth)
     coordinator.async_request_refresh.assert_awaited()
 
 
-async def test_switch_rest_error_falls_back_to_legacy_cgi(
+async def test_switch_rest_error_falls_back_to_cgi(
     hass, enable_custom_integrations, monkeypatch
 ):
     entry = MockConfigEntry(

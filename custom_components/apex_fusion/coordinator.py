@@ -1,8 +1,8 @@
 """Coordinator for fetching/parsing Apex controller state.
 
 Strategy:
-- Prefer the newer REST API if present and credentials work.
-- Fall back to legacy `status.xml` if REST is unavailable.
+- Prefer the REST API when credentials work.
+- Use alternate endpoints when REST is unavailable.
 """
 
 from __future__ import annotations
@@ -49,6 +49,12 @@ def clean_hostname_display(hostname: str | None) -> str | None:
 
     Controllers commonly report hostnames with underscores. HA UIs read better
     with spaces, so normalize for display only.
+
+    Args:
+        hostname: Raw hostname or tank name.
+
+    Returns:
+        Normalized display name, or None if empty.
     """
 
     t = (hostname or "").strip()
@@ -67,6 +73,12 @@ def module_abaddr_from_input_did(did: str) -> int | None:
 
     This function is intentionally conservative and returns None when the DID
     is not in the expected format.
+
+    Args:
+        did: Input DID value.
+
+    Returns:
+        Aquabus address when present, otherwise None.
     """
 
     t = (did or "").strip()
@@ -170,11 +182,23 @@ def build_trident_device_info(
 
     The Trident is a distinct physical module; grouping its entities under a
     separate device keeps the controller device page manageable.
+
+    Args:
+        host: Controller host/IP.
+        meta: Coordinator meta dict.
+        controller_device_identifier: Stable identifier for the controller device.
+        trident_abaddr: Aquabus address of the Trident.
+        trident_hwtype: Optional module hwtype token.
+        trident_hwrev: Optional module hardware revision.
+        trident_swrev: Optional module software revision.
+        trident_serial: Optional module serial.
+
+    Returns:
+        DeviceInfo instance for the Trident module.
     """
 
-    # Historically, Trident used a separate identifier scheme. Keep the helper
-    # for call-site readability, but align identifiers and naming with generic
-    # Aquabus module devices.
+    # Keep the helper for call-site readability, but align identifiers and
+    # naming with generic Aquabus module devices.
 
     hwtype = str(trident_hwtype).strip().upper() if trident_hwtype else "TRI"
     return build_module_device_info(
@@ -206,6 +230,18 @@ def build_aquabus_child_device_info_from_data(
     generic module DeviceInfo.
 
     This uses only controller-provided metadata (config/status payloads).
+
+    Args:
+        host: Controller host/IP.
+        controller_meta: Meta dict for the controller.
+        controller_device_identifier: Stable identifier for the controller device.
+        data: Coordinator data dict.
+        module_abaddr: Aquabus address of the child module.
+        module_hwtype_hint: Optional hwtype hint.
+        module_name_hint: Optional friendly name hint.
+
+    Returns:
+        DeviceInfo instance when the module can be identified, otherwise None.
     """
 
     meta = module_meta_from_data(data, module_abaddr=module_abaddr)
@@ -264,6 +300,20 @@ def build_module_device_info(
     Notes:
     - No model/identifier fallbacks: callers should only pass real values.
     - The module device is parented under the Apex controller device.
+
+    Args:
+        host: Controller host/IP.
+        controller_device_identifier: Stable identifier for the controller device.
+        module_hwtype: Module hwtype token.
+        module_abaddr: Aquabus address.
+        module_name: Optional module name.
+        module_hwrev: Optional hardware revision.
+        module_swrev: Optional software revision.
+        module_serial: Optional serial.
+        tank_name: Optional tank/hostname for suggested area.
+
+    Returns:
+        DeviceInfo instance for the module.
     """
 
     hwtype = str(module_hwtype or "").strip().upper()
@@ -308,7 +358,14 @@ def build_module_device_info(
 
 
 def _modules_from_raw_status(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract the controller's module list from a raw REST payload."""
+    """Extract module dicts from a raw REST payload.
+
+    Args:
+        raw: Raw REST payload mapping.
+
+    Returns:
+        List of module mappings.
+    """
 
     modules_any: Any = raw.get("modules")
     if isinstance(modules_any, list):
@@ -328,7 +385,15 @@ def _modules_from_raw_status(raw: dict[str, Any]) -> list[dict[str, Any]]:
 def module_meta_from_data(
     data: dict[str, Any], *, module_abaddr: int
 ) -> dict[str, str | None]:
-    """Return module metadata (hwtype/name/hwrev/swrev/serial) when available."""
+    """Return module metadata for a specific Aquabus address.
+
+    Args:
+        data: Coordinator data.
+        module_abaddr: Aquabus address.
+
+    Returns:
+        Dict containing keys: `hwtype`, `name`, `hwrev`, `swrev`, `serial`.
+    """
 
     out: dict[str, str | None] = {
         "hwtype": None,
@@ -416,7 +481,17 @@ def build_module_device_info_from_data(
     data: dict[str, Any],
     module_abaddr: int,
 ) -> DeviceInfo | None:
-    """Build module DeviceInfo from coordinator data when hwtype is known."""
+    """Build module DeviceInfo from coordinator data.
+
+    Args:
+        host: Controller host/IP.
+        controller_device_identifier: Device identifier used for the parent device.
+        data: Coordinator data.
+        module_abaddr: Aquabus address.
+
+    Returns:
+        DeviceInfo when the module can be identified; otherwise `None`.
+    """
 
     meta = module_meta_from_data(data, module_abaddr=module_abaddr)
     hwtype = str(meta.get("hwtype") or "").strip().upper()
@@ -454,6 +529,12 @@ def normalize_module_hwtype_from_outlet_type(outlet_type: str | None) -> str | N
     - "MXMPump|AI|Nero5" (device-specific, but the hosting module is "MXM")
 
     This function is intentionally conservative and returns None when empty.
+
+    Args:
+        outlet_type: Raw outlet type token.
+
+    Returns:
+        Normalized module hwtype token, or `None` when unknown.
     """
 
     t = (outlet_type or "").strip()
@@ -480,6 +561,13 @@ def unambiguous_module_abaddr_from_config(
 
     This is used for safely parenting entities under a module device without
     guessing when multiple modules of the same hwtype exist.
+
+    Args:
+        data: Coordinator data dict.
+        module_hwtype: Module hwtype token to match.
+
+    Returns:
+        Aquabus address when exactly one matching module is present, otherwise None.
     """
 
     hw = str(module_hwtype or "").strip().upper()
@@ -511,11 +599,11 @@ def unambiguous_module_abaddr_from_config(
 
 
 class _RestNotSupported(Exception):
-    """Internal signal used to fall back to legacy XML."""
+    """Internal signal used to switch to the XML status endpoint."""
 
 
 class _RestAuthRejected(Exception):
-    """Internal signal that REST login/auth was rejected; try legacy XML."""
+    """Internal signal that REST login/auth was rejected; try the XML endpoint."""
 
 
 class _RestRateLimited(Exception):
@@ -586,6 +674,12 @@ def _sanitize_mconf_for_storage(mconf_obj: dict[str, Any]) -> list[dict[str, Any
     The raw payload can include a lot of device metadata. For coordinator state,
     only retain fields needed by this integration (module update flags, a small
     subset of `extra`, and identity fields).
+
+    Args:
+        mconf_obj: REST config payload object.
+
+    Returns:
+        Sanitized list of module config dicts.
     """
 
     mconf_any: Any = mconf_obj.get("mconf")
@@ -647,6 +741,12 @@ def _sanitize_nconf_for_storage(nconf_obj: dict[str, Any]) -> dict[str, Any]:
     """Sanitize `nconf` (from `/rest/config`) for storage.
 
     This payload commonly includes credentials. Keep only update-related fields.
+
+    Args:
+        nconf_obj: REST config payload object.
+
+    Returns:
+        Sanitized dict containing update-related controller fields.
     """
 
     nconf_any: Any = nconf_obj.get("nconf")
@@ -688,7 +788,7 @@ def _to_number(s: str | None) -> float | None:
 
 
 def build_status_url(host: str, status_path: str) -> str:
-    """Build a full URL to the legacy status endpoint.
+    """Build a full URL to the XML status endpoint.
 
     Args:
         host: Hostname or URL.
@@ -726,7 +826,7 @@ def build_base_url(host: str) -> str:
 
 
 def parse_status_xml(xml_text: str) -> dict[str, Any]:
-    """Parse legacy `status.xml` into a normalized dict.
+    """Parse `status.xml` into a normalized dict.
 
     Args:
         xml_text: Raw XML text.
@@ -799,7 +899,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
         if direct is not None:
             return direct
 
-        # Some firmwares nest payloads.
+        # Payloads may be nested under common container keys.
         for container_key in (
             "data",
             "status",
@@ -878,7 +978,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             if not did:
                 continue
 
-            # Some firmwares include module identity fields for inputs.
+            # Module identity fields for inputs may be present.
             module_abaddr: int | None = None
             module_abaddr_any: Any = (
                 item.get("module_abaddr") or item.get("abaddr") or item.get("abAddr")
@@ -938,7 +1038,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             gid_any: Any = item.get("gid")
             gid = gid_any if isinstance(gid_any, str) else None
 
-            # Some firmwares include module identity fields for outputs.
+            # Module identity fields for outputs may be present.
             out_module_abaddr: int | None = None
             out_abaddr_any: Any = (
                 item.get("module_abaddr")
@@ -1032,7 +1132,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             reagent_c: int | None = None
             waste_level: int | None = None
 
-            # Some firmwares may expose a single list/tuple for all reagents.
+            # Reagents may be exposed as a single list/tuple.
             reagents_any: Any = extra.get("reagents")
             if isinstance(reagents_any, (list, tuple)):
                 reagents_list: list[Any]
@@ -1145,8 +1245,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
 
             # TODO: Identify ACTUAL Triden NP hwtype; requires dump (Issue: https://github.com/roblandry/apex-fusion-home-assistant/issues/4)
             # Only treat explicitly-known hardware types as Trident-family.
-            # Avoid heuristic detection to prevent false positives across different
-            # firmware families/modules.
+            # Avoid heuristic detection to prevent false positives across modules.
             if hwtype not in {"TRI", "TNP"}:
                 continue
 
@@ -1191,7 +1290,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             present_any: Any = module.get("present")
             present = bool(present_any) if isinstance(present_any, bool) else True
 
-            # Newer firmwares expose Trident container levels as a list of numbers.
+            # Trident container levels are provided as a list of numbers.
             levels_any: Any = extra.get("levels")
             if isinstance(levels_any, list):
                 parsed_levels: list[float] = []
@@ -1217,7 +1316,11 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             if not status:
                 break
 
-            # Some firmwares return simple statuses like "idle"/"ok".
+            # Match Apex UI capitalization (commonly: "Testing Ca/Mg").
+            if status.lower().startswith("testing"):
+                status = "Testing" + status[7:]
+
+            # Controllers may return simple statuses like "idle"/"ok".
             # Normalize those to sentence-case while preserving mixed-content
             # statuses like "testing Ca/Mg".
             if status.isalpha():
@@ -1260,8 +1363,8 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
         }
 
     def _parse_last_alert_statement() -> dict[str, Any]:
-        # The Apex REST payload format for alerts/notifications varies by firmware.
-        # We try common container names and extract a human-facing statement.
+        # The REST payload may use different container keys for alerts.
+        # Try common container names and extract a human-facing statement.
         for key in ("notifications", "alerts", "alarms", "warnings", "messages"):
             items_any: Any = _find_field(status_obj, key)
             if not isinstance(items_any, list) or not items_any:
@@ -1306,7 +1409,11 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
         return {"last_statement": None, "last_message": None}
 
     def _parse_feed() -> dict[str, Any] | None:
-        """Extract feed-mode status from common REST payload variants."""
+        """Extract feed-mode status from common REST payload variants.
+
+        Returns:
+            Feed-mode dict when present, otherwise None.
+        """
 
         def _to_int(v: Any) -> int | None:
             if isinstance(v, int):
@@ -1390,7 +1497,7 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_status_cgi_json(status_obj: dict[str, Any]) -> dict[str, Any]:
-    """Parse legacy `/cgi-bin/status.json` into a normalized dict.
+    """Parse `/cgi-bin/status.json` into a normalized dict.
 
     Args:
         status_obj: Parsed JSON dict from `/cgi-bin/status.json`.
@@ -1624,6 +1731,9 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return a stable non-IP identifier for this controller.
 
         Prefer controller serial; fall back to config entry id (stable, non-IP).
+
+        Returns:
+            Identifier for use in the HA device registry.
         """
         if self._cached_serial:
             return self._cached_serial
@@ -1647,7 +1757,14 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return data
 
     def _merge_cached_rest_config(self, data: dict[str, Any]) -> None:
-        """Merge cached sanitized REST config into the new coordinator data."""
+        """Merge cached sanitized REST config into the new coordinator data.
+
+        Args:
+            data: Coordinator data dict being assembled for this poll.
+
+        Returns:
+            None.
+        """
         if self._cached_mconf is not None or self._cached_nconf is not None:
             config_any: Any = data.get("config")
             if not isinstance(config_any, dict):
@@ -1701,6 +1818,18 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Optionally refresh cached config subsets.
 
         This is best-effort and should never fail the main status poll.
+
+        Args:
+            data: Coordinator data dict being assembled for this poll.
+            session: aiohttp client session.
+            base_url: Controller base URL.
+            sid: Optional connect.sid value.
+            timeout_seconds: Request timeout in seconds.
+            host: Controller host/IP.
+            force: Whether to force a refresh regardless of cache age.
+
+        Returns:
+            None.
         """
 
         def _cookie_headers(sid_value: str | None) -> dict[str, str]:
@@ -1792,7 +1921,7 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._rest_config_last_fetch = now
                 return
         except (PermissionError, FileNotFoundError):
-            # Permission/404: either forbidden on this firmware or not present.
+            # Permission/404: either forbidden or not present.
             pass
         except (asyncio.TimeoutError, aiohttp.ClientError, json.JSONDecodeError) as err:
             _LOGGER.debug("REST config fetch failed: %s", err)
@@ -1800,7 +1929,14 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Unexpected REST config error: %s", err)
 
     def _finalize_trident(self, data: dict[str, Any]) -> None:
-        """Compute derived Trident fields from raw status + config."""
+        """Compute derived Trident fields from raw status + config.
+
+        Args:
+            data: Coordinator data dict.
+
+        Returns:
+            None.
+        """
         trident_any: Any = data.get("trident")
         if not isinstance(trident_any, dict):
             return
@@ -1823,7 +1959,7 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # - index 2: reagent C remaining
             # - index 3: reagent B remaining
             # - index 4: reagent A remaining
-            # Some firmwares omit the aux value; handle 4-element lists as
+            # Controllers may omit the aux value; handle 4-element lists as
             # [waste, reagent C, reagent B, reagent A].
             idx_a: int | None = None
             idx_b: int | None = None
@@ -1917,6 +2053,12 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_rest_login(self, *, session: aiohttp.ClientSession) -> str:
         """Ensure a REST session cookie exists and return connect.sid.
+
+        Args:
+            session: aiohttp client session.
+
+        Returns:
+            The connect.sid session value.
 
         Raises:
             FileNotFoundError: If REST is not supported.
@@ -2100,7 +2242,18 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise HomeAssistantError(f"Error sending REST control: {err}") from err
 
     async def async_rest_get_json(self, *, path: str) -> dict[str, Any]:
-        """Send a REST GET with coordinator-managed auth and rate limiting."""
+        """Send a REST GET with coordinator-managed auth and rate limiting.
+
+        Args:
+            path: REST path beginning with or without a leading slash.
+
+        Returns:
+            Parsed JSON object.
+
+        Raises:
+            FileNotFoundError: If the REST path does not exist.
+            HomeAssistantError: If REST is disabled or the request fails.
+        """
         now = time.monotonic()
         if now < self._rest_disabled_until:
             raise HomeAssistantError(
@@ -2349,7 +2502,15 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     async def _fetch_rest_status(
                         sid: str | None, *, status_url: str
                     ) -> dict[str, Any] | None:
-                        """Fetch REST status payload; returns parsed dict or None."""
+                        """Fetch a REST status payload.
+
+                        Args:
+                            sid: Optional connect.sid session value.
+                            status_url: Full URL for the status endpoint.
+
+                        Returns:
+                            Parsed JSON dict when available, otherwise None.
+                        """
                         async with async_timeout.timeout(timeout_seconds):
                             async with session.get(
                                 status_url, headers=_cookie_headers(sid)
@@ -2394,7 +2555,14 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
 
                     async def _login_rest(*, login_user: str) -> str | None:
-                        """Perform REST login, returning connect.sid if found."""
+                        """Perform REST login.
+
+                        Args:
+                            login_user: Username to attempt.
+
+                        Returns:
+                            The connect.sid value if found, otherwise None.
+                        """
                         login_cookie_sid = ""
                         async with async_timeout.timeout(timeout_seconds):
                             async with session.post(
@@ -2601,7 +2769,7 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     continue
                                 except _RestStatusUnauthorized:
                                     # If REST status rejects a fresh session, treat REST as unusable
-                                    # for this poll and fall back to legacy.
+                                    # for this poll and fall back to alternate endpoints.
                                     self._rest_sid = None
                                     raise _RestAuthRejected
 
@@ -2636,8 +2804,8 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         except _RestNotSupported:
                             raise
                         except _RestAuthRejected:
-                            # REST rejected (credentials/user not accepted). Fall back to legacy
-                            # for this poll, but keep trying REST on the next poll.
+                            # REST rejected (credentials/user not accepted). Fall back to alternate
+                            # endpoints for this poll, but keep trying REST on the next poll.
                             self._rest_sid = None
                             raise
                         except _RestRateLimited as err:
@@ -2672,13 +2840,19 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed("REST update failed after retries")
 
                 except _RestRateLimited:
-                    _LOGGER.debug("REST rate limited; falling back to legacy")
+                    _LOGGER.debug(
+                        "REST rate limited; falling back to alternate endpoints"
+                    )
                     pass
                 except _RestAuthRejected:
-                    _LOGGER.debug("REST login rejected; falling back to legacy")
+                    _LOGGER.debug(
+                        "REST login rejected; falling back to alternate endpoints"
+                    )
                     pass
                 except _RestNotSupported:
-                    _LOGGER.debug("REST not supported; falling back to legacy")
+                    _LOGGER.debug(
+                        "REST not supported; falling back to alternate endpoints"
+                    )
                     pass
                 except UpdateFailed:
                     raise
@@ -2697,16 +2871,16 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # End of REST block
 
-        # Try legacy JSON first (richer metadata than status.xml).
+        # Try CGI JSON first (richer metadata than status.xml).
         if True:
             json_url = f"{base_url}/cgi-bin/status.json"
             try:
-                _LOGGER.debug("Trying legacy CGI JSON update: %s", json_url)
+                _LOGGER.debug("Trying CGI JSON update: %s", json_url)
                 async with async_timeout.timeout(timeout_seconds):
                     async with session.get(json_url, auth=auth) as resp:
                         if resp.status in (401, 403):
                             raise ConfigEntryAuthFailed(
-                                "Invalid auth for Apex legacy status.json"
+                                "Invalid auth for Apex status.json"
                             )
                         if resp.status == 404:
                             raise FileNotFoundError
@@ -2723,10 +2897,10 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     return self._apply_serial_cache(data)
 
             except FileNotFoundError:
-                _LOGGER.debug("Legacy CGI status.json not found; trying status.xml")
+                _LOGGER.debug("CGI status.json not found; trying status.xml")
             except ConfigEntryAuthFailed:
                 _LOGGER.warning(
-                    "Legacy CGI JSON authentication failed for host=%s user=%s",
+                    "CGI JSON authentication failed for host=%s user=%s",
                     host,
                     (username or "admin"),
                 )
@@ -2736,20 +2910,16 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 aiohttp.ClientError,
                 json.JSONDecodeError,
             ) as err:
-                _LOGGER.debug(
-                    "Legacy CGI JSON update failed; trying status.xml: %s", err
-                )
+                _LOGGER.debug("CGI JSON update failed; trying status.xml: %s", err)
             except Exception as err:
                 _LOGGER.debug("Unexpected CGI JSON error; trying status.xml: %s", err)
 
         try:
-            _LOGGER.debug("Trying legacy XML update: %s", url)
+            _LOGGER.debug("Trying XML update: %s", url)
             async with async_timeout.timeout(timeout_seconds):
                 async with session.get(url, auth=auth) as resp:
                     if resp.status in (401, 403):
-                        raise ConfigEntryAuthFailed(
-                            "Invalid auth for Apex legacy status.xml"
-                        )
+                        raise ConfigEntryAuthFailed("Invalid auth for Apex status.xml")
                     resp.raise_for_status()
                     body = await resp.text()
 
@@ -2762,7 +2932,7 @@ class ApexNeptuneDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except ConfigEntryAuthFailed:
             _LOGGER.warning(
-                "Legacy XML authentication failed for host=%s user=%s",
+                "XML authentication failed for host=%s user=%s",
                 host,
                 (username or "admin"),
             )

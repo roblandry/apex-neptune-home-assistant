@@ -1,4 +1,8 @@
-"""Tests for Apex Fusion sensor platform."""
+"""Tests for the Apex Fusion sensor platform.
+
+These tests validate that sensor discovery and entity state behavior are
+schema-tolerant and coordinator-driven.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,15 @@ from custom_components.apex_fusion.const import CONF_HOST, DOMAIN
 
 @dataclass
 class _CoordinatorStub:
+    """Minimal coordinator stub used by platform tests.
+
+    Attributes:
+        data: Coordinator data payload exposed to entities.
+        last_update_success: Whether the last update succeeded.
+        device_identifier: Device identifier used by device info helpers.
+        listeners: Listener callbacks registered by entities.
+    """
+
     data: dict[str, Any]
     last_update_success: bool = True
     device_identifier: str = "TEST"
@@ -22,6 +35,14 @@ class _CoordinatorStub:
     def async_add_listener(
         self, update_callback: Callable[[], None]
     ) -> Callable[[], None]:
+        """Register an update listener.
+
+        Args:
+            update_callback: Callback invoked when the coordinator updates.
+
+        Returns:
+            Callable that unregisters the listener.
+        """
         if self.listeners is not None:
             self.listeners.append(update_callback)
 
@@ -32,139 +53,117 @@ class _CoordinatorStub:
 
 
 def test_sensor_helpers_cover_all_branches():
-    from custom_components.apex_fusion import sensor
-
-    assert sensor._icon_for_probe_type("tmp", "Tmp") == "mdi:thermometer"
-    assert sensor._icon_for_probe_type("ph", "pH") == "mdi:ph"
-    assert sensor._icon_for_probe_type("cond", "salt") == "mdi:shaker-outline"
-    assert sensor._icon_for_probe_type("cond", "conductivity") == "mdi:flash"
-    assert sensor._icon_for_probe_type("amps", "Amps") == "mdi:current-ac"
-    assert sensor._icon_for_probe_type("alk", "Alk") == "mdi:test-tube"
-    assert sensor._icon_for_probe_type("ca", "Ca") == "mdi:flask"
-    assert sensor._icon_for_probe_type("mg", "Mg") == "mdi:flask-outline"
-    assert sensor._icon_for_probe_type("other", "x") == "mdi:gauge"
-
-    assert sensor._friendly_probe_name(name="Tmp", probe_type="Tmp") == "Tmp"
-    assert sensor._friendly_probe_name(name="Temp", probe_type="Temp") == "Temperature"
-    assert sensor._friendly_probe_name(name="Tmp_2", probe_type="Temp") == "Temperature"
-    assert sensor._friendly_probe_name(name="Tmp2", probe_type="Tmp") == "Tmp2"
-    assert sensor._friendly_probe_name(name="T1", probe_type="Tmp") == "T1"
-
-    assert sensor._friendly_probe_name(name="Alkx4", probe_type="alk") == "Alkalinity"
-    assert sensor._friendly_probe_name(name="Cax4", probe_type="ca") == "Calcium"
-    assert sensor._friendly_probe_name(name="Mgx4", probe_type="mg") == "Magnesium"
-    assert sensor._friendly_probe_name(name="Cond", probe_type="Cond") == "Conductivity"
-    assert (
-        sensor._friendly_probe_name(name="Salinity", probe_type="cond")
-        == "Conductivity"
+    from custom_components.apex_fusion.apex_fusion.data_fields import section_field
+    from custom_components.apex_fusion.apex_fusion.network import network_field
+    from custom_components.apex_fusion.apex_fusion.outputs import (
+        friendly_outlet_name,
+        icon_for_outlet_type,
+        pretty_model,
     )
-    assert sensor._friendly_probe_name(name="ORP", probe_type="orp") == "ORP"
-    assert sensor._friendly_probe_name(name="Redox", probe_type="orp") == "ORP"
+    from custom_components.apex_fusion.apex_fusion.probes import (
+        ProbeMetaResolver,
+        as_float,
+        friendly_probe_name,
+        icon_for_probe_type,
+        units_and_meta,
+    )
 
-    assert sensor.pretty_model("Nero5") == "Nero 5"
-    assert sensor.pretty_model("Nero") == "Nero"
-    assert sensor.pretty_model("123") == "123"
-    assert sensor.pretty_model("A1B") == "A1B"
-    assert sensor.pretty_model("") == ""
+    assert icon_for_probe_type("tmp", "Tmp") == "mdi:thermometer"
+    assert icon_for_probe_type("ph", "pH") == "mdi:ph"
+    assert icon_for_probe_type("cond", "salt") == "mdi:shaker-outline"
+    assert icon_for_probe_type("cond", "conductivity") == "mdi:flash"
+    assert icon_for_probe_type("amps", "Amps") == "mdi:current-ac"
+    assert icon_for_probe_type("alk", "Alk") == "mdi:test-tube"
+    assert icon_for_probe_type("ca", "Ca") == "mdi:flask"
+    assert icon_for_probe_type("mg", "Mg") == "mdi:flask-outline"
+    assert icon_for_probe_type("other", "x") == "mdi:gauge"
+
+    assert friendly_probe_name(name="Tmp", probe_type="Tmp") == "Tmp"
+    assert friendly_probe_name(name="Temp", probe_type="Temp") == "Temperature"
+    assert friendly_probe_name(name="Tmp_2", probe_type="Temp") == "Temperature"
+    assert friendly_probe_name(name="Tmp2", probe_type="Tmp") == "Tmp2"
+    assert friendly_probe_name(name="T1", probe_type="Tmp") == "T1"
+
+    assert friendly_probe_name(name="Alkx4", probe_type="alk") == "Alkalinity"
+    assert friendly_probe_name(name="Cax4", probe_type="ca") == "Calcium"
+    assert friendly_probe_name(name="Mgx4", probe_type="mg") == "Magnesium"
+    assert friendly_probe_name(name="Cond", probe_type="Cond") == "Conductivity"
+    assert friendly_probe_name(name="Salinity", probe_type="cond") == "Conductivity"
+    assert friendly_probe_name(name="ORP", probe_type="orp") == "ORP"
+    assert friendly_probe_name(name="Redox", probe_type="orp") == "ORP"
+
+    assert pretty_model("Nero5") == "Nero 5"
+    assert pretty_model("Nero") == "Nero"
+    assert pretty_model("123") == "123"
+    assert pretty_model("A1B") == "A1B"
+    assert pretty_model("") == ""
 
     assert (
-        sensor.friendly_outlet_name(
-            outlet_name="Nero_5_F", outlet_type="MXMPump|AI|Nero5"
-        )
+        friendly_outlet_name(outlet_name="Nero_5_F", outlet_type="MXMPump|AI|Nero5")
         == "AI Nero 5 (Nero 5 F)"
     )
-    assert (
-        sensor.friendly_outlet_name(outlet_name="Alk_4_4", outlet_type="selector")
-        == "Alkalinity Testing"
+    assert friendly_outlet_name(outlet_name="Alk_4_4", outlet_type="selector") == (
+        "Alkalinity Testing"
+    )
+    assert friendly_outlet_name(outlet_name="Ca_4_5", outlet_type="selector") == (
+        "Ca 4 5"
+    )
+    assert friendly_outlet_name(outlet_name="Mg_4_6", outlet_type="selector") == (
+        "Mg 4 6"
+    )
+    assert friendly_outlet_name(outlet_name="TNP_5_1", outlet_type="selector") == (
+        "Trident NP"
     )
     assert (
-        sensor.friendly_outlet_name(outlet_name="Ca_4_5", outlet_type="selector")
-        == "Ca 4 5"
-    )
-    assert (
-        sensor.friendly_outlet_name(outlet_name="Mg_4_6", outlet_type="selector")
-        == "Mg 4 6"
-    )
-    assert (
-        sensor.friendly_outlet_name(outlet_name="TNP_5_1", outlet_type="selector")
-        == "Trident NP"
-    )
-    assert (
-        sensor.friendly_outlet_name(outlet_name="Trident_4_3", outlet_type="selector")
+        friendly_outlet_name(outlet_name="Trident_4_3", outlet_type="selector")
         == "Combined Testing"
     )
     # pretty_name already included in label -> label only
-    assert (
-        sensor.friendly_outlet_name(
-            outlet_name="Nero_5", outlet_type="MXMPump|AI|Nero5"
-        )
-        == "AI Nero 5"
-    )
-    assert (
-        sensor.friendly_outlet_name(outlet_name="Heater_1", outlet_type=None)
-        == "Heater 1"
-    )
-    assert sensor.friendly_outlet_name(outlet_name="", outlet_type="x") == ""
+    assert friendly_outlet_name(
+        outlet_name="Nero_5", outlet_type="MXMPump|AI|Nero5"
+    ) == ("AI Nero 5")
+    assert friendly_outlet_name(outlet_name="Heater_1", outlet_type=None) == "Heater 1"
+    assert friendly_outlet_name(outlet_name="", outlet_type="x") == ""
 
-    assert sensor._temp_unit(25.0).endswith("C")
-    assert sensor._temp_unit(80.0).endswith("F")
+    assert ProbeMetaResolver.temp_unit(25.0).endswith("C")
+    assert ProbeMetaResolver.temp_unit(80.0).endswith("F")
 
-    assert sensor._as_float(1) == 1.0
-    assert sensor._as_float(1.5) == 1.5
-    assert sensor._as_float(" 2.5 ") == 2.5
-    assert sensor._as_float(" ") is None
-    assert sensor._as_float("nope") is None
-    assert sensor._as_float(object()) is None
+    assert as_float(1) == 1.0
+    assert as_float(1.5) == 1.5
+    assert as_float(" 2.5 ") == 2.5
+    assert as_float(" ") is None
+    assert as_float("nope") is None
+    assert as_float(object()) is None
 
-    assert (
-        sensor._units_and_meta(probe_name="x", probe_type="amps", value=1.0)[0] is None
-    )
-    assert sensor._units_and_meta(probe_name="x", probe_type="ph", value=8.1)[0] is None
-    assert (
-        sensor._units_and_meta(probe_name="x", probe_type="alk", value=7.0)[0] == "dKH"
-    )
-    assert (
-        sensor._units_and_meta(probe_name="x", probe_type="ca", value=420.0)[0] == "ppm"
-    )
-    assert (
-        sensor._units_and_meta(probe_name="x", probe_type="mg", value=1300.0)[0]
-        == "ppm"
-    )
-    assert (
-        sensor._units_and_meta(probe_name="salt", probe_type="cond", value=35.0)[0]
-        == "ppt"
-    )
-    assert (
-        sensor._units_and_meta(probe_name="cond", probe_type="cond", value=1.0)[0]
-        == "ppt"
-    )
-    assert (
-        sensor._units_and_meta(probe_name="Tmp", probe_type="tmp", value=25.0)[0]
-        is None
-    )
-    assert (
-        sensor._units_and_meta(probe_name="x", probe_type="other", value=1.0)[0] is None
-    )
+    assert units_and_meta(probe_name="x", probe_type="amps", value=1.0)[0] is None
+    assert units_and_meta(probe_name="x", probe_type="ph", value=8.1)[0] is None
+    assert units_and_meta(probe_name="x", probe_type="alk", value=7.0)[0] == "dKH"
+    assert units_and_meta(probe_name="x", probe_type="ca", value=420.0)[0] == "ppm"
+    assert units_and_meta(probe_name="x", probe_type="mg", value=1300.0)[0] == "ppm"
+    assert units_and_meta(probe_name="salt", probe_type="cond", value=35.0)[0] == "ppt"
+    assert units_and_meta(probe_name="cond", probe_type="cond", value=1.0)[0] == "ppt"
+    assert units_and_meta(probe_name="Tmp", probe_type="tmp", value=25.0)[0] is None
+    assert units_and_meta(probe_name="x", probe_type="other", value=1.0)[0] is None
 
-    assert sensor.icon_for_outlet_type("pump") == "mdi:pump"
-    assert sensor.icon_for_outlet_type("light") == "mdi:lightbulb"
-    assert sensor.icon_for_outlet_type("heater") == "mdi:radiator"
-    assert sensor.icon_for_outlet_type("other") == "mdi:power-socket-us"
+    assert icon_for_outlet_type("pump") == "mdi:pump"
+    assert icon_for_outlet_type("light") == "mdi:lightbulb"
+    assert icon_for_outlet_type("heater") == "mdi:radiator"
+    assert icon_for_outlet_type("other") == "mdi:power-socket-us"
 
     # network/meta field helpers
-    nf = sensor._network_field("ipaddr")
+    nf = network_field("ipaddr")
     assert nf({"network": {"ipaddr": "1.2.3.4"}}) == "1.2.3.4"
     assert nf({"network": "nope"}) is None
-    sf = sensor._section_field("alerts", "last_statement")
+    sf = section_field("alerts", "last_statement")
     assert sf({"alerts": "nope"}) is None
     assert sf({"alerts": {"last_statement": "x"}}) == "x"
 
 
 def test_trident_level_ml_helper_covers_branches():
-    from custom_components.apex_fusion import sensor
+    from custom_components.apex_fusion.apex_fusion.trident import trident_level_ml
 
-    get0 = sensor._trident_level_ml(0)
-    get1 = sensor._trident_level_ml(1)
+    get0 = trident_level_ml(0)
+    get1 = trident_level_ml(1)
 
     assert get0({}) is None
     assert get0({"trident": "nope"}) is None
@@ -172,7 +171,7 @@ def test_trident_level_ml_helper_covers_branches():
     assert get0({"trident": {"levels_ml": []}}) is None
     assert get0({"trident": {"levels_ml": [1.0]}}) == 1.0
     assert get1({"trident": {"levels_ml": [1.0]}}) is None
-    assert sensor._trident_level_ml(-1)({"trident": {"levels_ml": [1.0]}}) is None
+    assert trident_level_ml(-1)({"trident": {"levels_ml": [1.0]}}) is None
 
 
 def test_diagnostic_sensor_percentage_fallback_branch():
@@ -519,7 +518,7 @@ async def test_outlet_intensity_sensor_creates_vdm_module_device(
 
 async def test_outlet_intensity_sensor_refresh_and_lifecycle_cover_branches():
     from custom_components.apex_fusion import sensor
-    from custom_components.apex_fusion.sensor import _OutletIntensityRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletIntensityRef
 
     listeners: list[Callable[[], None]] = []
     coordinator = _CoordinatorStub(
@@ -547,7 +546,7 @@ async def test_outlet_intensity_sensor_refresh_and_lifecycle_cover_branches():
     ent = sensor.ApexOutletIntensitySensor(
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletIntensityRef(did="6_3", name="VarSpd3_6_3"),
+        ref=OutletIntensityRef(did="6_3", name="VarSpd3_6_3"),
     )
     ent.async_write_ha_state = lambda *args, **kwargs: None
 
@@ -600,7 +599,7 @@ async def test_outlet_intensity_sensor_refresh_and_lifecycle_cover_branches():
     assert ent._unsub is None
 
 
-async def test_sensor_setup_without_network_or_firmware_adds_no_diagnostics(
+async def test_sensor_setup_without_network_or_meta_adds_no_diagnostics(
     hass, enable_custom_integrations
 ):
     entry = MockConfigEntry(
@@ -633,7 +632,7 @@ async def test_sensor_setup_without_network_or_firmware_adds_no_diagnostics(
     await sensor.async_setup_entry(hass, cast(Any, entry), _add_entities)
 
     # Diagnostic entities are always created (even if values are None) so they
-    # don't disappear when the first poll falls back to legacy data.
+    # remain stable across updates.
     assert len(added) == 7
 
 

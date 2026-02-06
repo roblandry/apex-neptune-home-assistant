@@ -541,7 +541,7 @@ def test_parse_status_xml_and_rest_and_cgi_json():
     assert rest_parsed["probes"]["T2"]["module_hwtype"] == "PM2"
     assert rest_parsed["probes"]["5_I1"]["module_abaddr"] == 5
     assert rest_parsed["outlets"][0]["device_id"] == "O1"
-    assert rest_parsed["trident"]["status"] == "testing Ca/Mg"
+    assert rest_parsed["trident"]["status"] == "Testing Ca/Mg"
     assert rest_parsed["trident"]["is_testing"] is True
     assert rest_parsed["trident"]["present"] is True
     assert rest_parsed["trident"]["reagent_a_remaining"] == 75

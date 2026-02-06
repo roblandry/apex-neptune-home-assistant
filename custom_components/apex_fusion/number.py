@@ -13,14 +13,13 @@ from homeassistant.const import EntityCategory, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify
 
-from .const import CONF_HOST, CONF_PASSWORD, DOMAIN
+from .apex_fusion import ApexFusionContext
+from .const import CONF_PASSWORD, DOMAIN, ICON_CUP_WATER
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
     build_trident_device_info,
-    clean_hostname_display,
 )
 
 
@@ -62,7 +61,7 @@ class ApexTridentWasteSizeNumber(NumberEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_icon = "mdi:cup-water"
+    _attr_icon = ICON_CUP_WATER
     _attr_native_unit_of_measurement = UnitOfVolume.MILLILITERS
 
     # Conservative bounds; can be widened if needed.
@@ -78,12 +77,9 @@ class ApexTridentWasteSizeNumber(NumberEntity):
         self._entry = entry
         self._unsub: Callable[[], None] | None = None
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        self._attr_unique_id = f"{serial}_trident_waste_size_ml".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_trident_waste_size_ml".lower()
         # If we can attach to a Trident device, keep the entity name short.
         # If we have to fall back to the controller device, include the prefix.
         self._attr_name = "Trident Waste Container Size"
@@ -101,20 +97,15 @@ class ApexTridentWasteSizeNumber(NumberEntity):
                 else None
             )
 
-            meta_any: Any = (coordinator.data or {}).get("meta")
-            meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-            hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-            tank_slug = slugify(
-                hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-            )
+            tank_slug = ctx.tank_slug
             self._attr_suggested_object_id = (
                 f"{tank_slug}_trident_addr{trident_abaddr_any}_waste_container_size"
             )
 
             self._attr_device_info = build_trident_device_info(
-                host=host,
-                meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 trident_abaddr=trident_abaddr_any,
                 trident_hwtype=(
                     str(trident_hwtype_any).strip().upper()
@@ -138,9 +129,9 @@ class ApexTridentWasteSizeNumber(NumberEntity):
             self._attr_name = "Waste Container Size"
         else:
             self._attr_device_info = build_device_info(
-                host=host,
-                meta=meta,
-                device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                meta=ctx.meta,
+                device_identifier=ctx.controller_device_identifier,
             )
 
         self._attr_available = bool(

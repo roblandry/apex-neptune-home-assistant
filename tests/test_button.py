@@ -351,7 +351,15 @@ async def test_button_press_reraises_home_assistant_error(
 async def test_trident_button_device_info_falls_back_without_abaddr(
     hass, enable_custom_integrations
 ):
-    """Cover defensive device_info fallback when Trident abaddr is missing."""
+    """Cover defensive device_info fallback when Trident abaddr is missing.
+
+    Args:
+        hass: Home Assistant fixture.
+        enable_custom_integrations: Fixture enabling custom integrations.
+
+    Returns:
+        None.
+    """
 
     entry = MockConfigEntry(
         domain=DOMAIN,

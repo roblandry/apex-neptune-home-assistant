@@ -9,7 +9,6 @@ Entities are coordinator-driven and do not poll independently.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from homeassistant.components.sensor import (
@@ -21,7 +20,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
-    UnitOfTemperature,
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
@@ -30,323 +28,42 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import slugify
 
-from .const import CONF_HOST, DOMAIN
+from .apex_fusion import ApexFusionContext
+from .apex_fusion.data_fields import section_field
+from .apex_fusion.discovery import ApexDiscovery, OutletIntensityRef, ProbeRef
+from .apex_fusion.network import network_field
+from .apex_fusion.outputs import (
+    icon_for_outlet_type,
+)
+from .apex_fusion.probes import (
+    as_float,
+    icon_for_probe_type,
+    units_and_meta,
+)
+from .apex_fusion.trident import trident_level_ml
+from .const import (
+    DOMAIN,
+    ICON_ALERT_CIRCLE_OUTLINE,
+    ICON_BEAKER_OUTLINE,
+    ICON_BRIGHTNESS_PERCENT,
+    ICON_BUG_OUTLINE,
+    ICON_FLASK_OUTLINE,
+    ICON_IP_NETWORK,
+    ICON_IP_NETWORK_OUTLINE,
+    ICON_ROUTER_NETWORK,
+    ICON_SIGNAL,
+    ICON_TRASH_CAN_OUTLINE,
+    ICON_WIFI_SETTINGS,
+    ICON_WIFI_STRENGTH_4,
+)
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_aquabus_child_device_info_from_data,
     build_device_info,
     build_trident_device_info,
-    clean_hostname_display,
 )
 
 _SIMPLE_REST_SINGLE_SENSOR_MODE = False
-
-
-def _icon_for_probe_type(probe_type: str, probe_name: str) -> str | None:
-    """Return an icon for a probe based on its reported type/name.
-
-    Args:
-        probe_type: Probe type identifier from the controller.
-        probe_name: Probe name.
-
-    Returns:
-        An mdi icon string.
-    """
-    t = (probe_type or "").strip().lower()
-    n = (probe_name or "").strip().lower()
-
-    if t in {"temp", "tmp"}:
-        return "mdi:thermometer"
-    if t == "ph":
-        return "mdi:ph"
-    if t == "cond":
-        return "mdi:shaker-outline" if n.startswith("salt") else "mdi:flash"
-    if t == "amps":
-        return "mdi:current-ac"
-    if t == "alk":
-        return "mdi:test-tube"
-    if t == "ca":
-        return "mdi:flask"
-    if t == "mg":
-        return "mdi:flask-outline"
-    return "mdi:gauge"
-
-
-def _friendly_probe_name(*, name: str, probe_type: str | None) -> str:
-    """Return a nicer display name for common probes.
-
-    Args:
-        name: Raw probe name from the controller.
-        probe_type: Raw probe type.
-
-    Returns:
-        Friendly name.
-    """
-    n = (name or "").strip()
-    t = (probe_type or "").strip().lower()
-
-    # Generic/common probe labels.
-    if t == "ph":
-        return "pH"
-    if t == "temp":
-        return "Temperature"
-    if t == "cond":
-        return "Conductivity"
-    if t == "orp":
-        return "ORP"
-
-    # Trident labels.
-    if t == "alk":
-        return "Alkalinity"
-    if t == "ca":
-        return "Calcium"
-    if t == "mg":
-        return "Magnesium"
-
-    # TODO: validate with real Trident NP data. (Issue: https://github.com/roblandry/apex-fusion-home-assistant/issues/8)
-    # Trident NP (when present) labels.
-    if t in {"no3", "nitrate", "nitrogen"}:
-        return "Nitrogen"
-    if t in {"po4", "phosphate"}:
-        return "Phosphate"
-
-    # Handle Unknown
-    return n
-
-
-def pretty_model(s: str) -> str:
-    """Prettify model tokens like 'Nero5' -> 'Nero 5'."""
-    t = (s or "").strip()
-    if not t:
-        return t
-
-    # Split first run of letters from trailing digits.
-    split_at: int | None = None
-    for idx, ch in enumerate(t):
-        if ch.isdigit():
-            split_at = idx
-            break
-
-    if split_at is None or split_at == 0:
-        return t
-
-    prefix = t[:split_at]
-    suffix = t[split_at:]
-    if suffix.isdigit() and prefix.isalpha():
-        return f"{prefix} {suffix}"
-
-    return t
-
-
-def friendly_outlet_name(*, outlet_name: str, outlet_type: str | None) -> str:
-    """Return a better entity name for an outlet/output.
-
-    Examples:
-        type='MXMPump|AI|Nero5', name='Nero_5_F' -> 'AI Nero 5 (Nero 5 F)'
-
-    Args:
-        outlet_name: Raw outlet name.
-        outlet_type: Raw outlet type string.
-
-    Returns:
-        Friendly name.
-    """
-    raw_name = (outlet_name or "").strip()
-    raw_type = (outlet_type or "").strip()
-    if not raw_name:
-        return raw_name
-
-    # Trident selector outputs use compact tokens like "Alk_4_4".
-    # For UI friendliness, canonicalize to plain chemistry names.
-    if raw_type.strip().lower() == "selector":
-        head = raw_name.split("_", 1)[0].strip().lower()
-        if head == "trident":
-            # In the Apex UI this typically corresponds to the "Combined" test.
-            return "Combined Testing"
-        if head == "alk":
-            return "Alkalinity Testing"
-
-        # TODO: validate with real Trident NP data; may need more mappings. (Issue: https://github.com/roblandry/apex-fusion-home-assistant/issues/7)
-        if head in {"tnp", "np"}:
-            return "Trident NP"
-
-    # Nice display for common MXM types: MXMPump|AI|Nero5, etc.
-    parts = [p.strip() for p in raw_type.split("|") if p.strip()]
-    if len(parts) >= 3 and parts[0].upper().startswith("MXM"):
-        vendor = parts[1]
-        model = pretty_model(parts[2])
-        pretty_name = raw_name.replace("_", " ").strip()
-        label = f"{vendor} {model}".strip()
-        if pretty_name and pretty_name.lower() not in label.lower():
-            return f"{label} ({pretty_name})"
-        return label
-
-    return raw_name.replace("_", " ").strip()
-
-
-def _temp_unit(value: float | None) -> UnitOfTemperature:
-    """Choose temperature unit.
-
-    Args:
-        value: Current temperature value (if numeric).
-
-    Returns:
-        Home Assistant temperature unit.
-    """
-    # Heuristic: allow mixed °F/°C probes; values <= 45 usually mean °C.
-    if value is not None and value <= 45:
-        return UnitOfTemperature.CELSIUS
-    return UnitOfTemperature.FAHRENHEIT
-
-
-def _as_float(value: Any) -> float | None:
-    """Best-effort conversion to float.
-
-    Args:
-        value: Any value.
-
-    Returns:
-        Float value if convertible, otherwise None.
-    """
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        t = value.strip()
-        if not t:
-            return None
-        try:
-            return float(t)
-        except ValueError:
-            return None
-    return None
-
-
-def _units_and_meta(
-    *,
-    probe_name: str,
-    probe_type: str,
-    value: float | None,
-) -> tuple[str | None, SensorDeviceClass | None, SensorStateClass | None]:
-    """Return units and sensor metadata for a probe.
-
-    Args:
-        probe_name: Probe name.
-        probe_type: Probe type identifier.
-        value: Current value as float (if numeric).
-    Returns:
-        Tuple of (unit, device_class, state_class).
-    """
-    t = (probe_type or "").strip().lower()
-    _ = (probe_name or "").strip().lower()
-
-    # if t == "amps":
-    #     return (
-    #         UnitOfElectricCurrent.AMPERE,
-    #         SensorDeviceClass.CURRENT,
-    #         SensorStateClass.MEASUREMENT,
-    #     )
-
-    # Generic/common probes.
-    if t == "ph":
-        return None, None, SensorStateClass.MEASUREMENT
-    if t == "temp":
-        return (
-            _temp_unit(value),
-            SensorDeviceClass.TEMPERATURE,
-            SensorStateClass.MEASUREMENT,
-        )
-    if t == "cond":
-        return "ppt", None, SensorStateClass.MEASUREMENT
-    if t == "orp":
-        return "mV", None, SensorStateClass.MEASUREMENT
-
-    # Trident-family probes.
-    if t == "alk":
-        return "dKH", None, SensorStateClass.MEASUREMENT
-    if t in ("ca", "mg"):
-        return "ppm", None, SensorStateClass.MEASUREMENT
-
-    # TODO: validate with real Trident NP data. (Issue: https://github.com/roblandry/apex-fusion-home-assistant/issues/8)
-    # Trident NP (when present) reports nitrogen/phosphate.
-    if t in {"no3", "nitrate"} or t in {"po4", "phosphate"}:
-        return "ppm", None, SensorStateClass.MEASUREMENT
-
-    # Handle unknown probes with no units or metadata,
-    # but still expose numeric values when possible.
-    return None, None, SensorStateClass.MEASUREMENT
-
-
-def icon_for_outlet_type(outlet_type: str | None) -> str | None:
-    """Return an icon for an outlet based on its device type."""
-    t = (outlet_type or "").strip().upper()
-    if "PUMP" in t:
-        return "mdi:pump"
-    if "LIGHT" in t:
-        return "mdi:lightbulb"
-    if "HEATER" in t:
-        return "mdi:radiator"
-    return "mdi:power-socket-us"
-
-
-@dataclass(frozen=True)
-class _ProbeRef:
-    """Reference to a probe/input exposed by the controller."""
-
-    key: str
-    name: str
-
-
-@dataclass(frozen=True)
-class _OutletIntensityRef:
-    """Reference to an outlet/output intensity sensor."""
-
-    did: str
-    name: str
-
-
-def _network_field(field: str) -> Callable[[dict[str, Any]], Any]:
-    """Return a function that extracts a network field from coordinator data."""
-
-    def _get(data: dict[str, Any]) -> Any:
-        network_any = data.get("network")
-        if isinstance(network_any, dict):
-            network = cast(dict[str, Any], network_any)
-            return network.get(field)
-        return None
-
-    return _get
-
-
-def _section_field(section: str, field: str) -> Callable[[dict[str, Any]], Any]:
-    """Return a function that extracts a field from a nested section dict."""
-
-    def _get(data: dict[str, Any]) -> Any:
-        section_any = data.get(section)
-        if isinstance(section_any, dict):
-            section_dict = cast(dict[str, Any], section_any)
-            return section_dict.get(field)
-        return None
-
-    return _get
-
-
-def _trident_level_ml(index: int) -> Callable[[dict[str, Any]], Any]:
-    """Return a function that extracts a Trident container level by index."""
-
-    def _get(data: dict[str, Any]) -> Any:
-        trident_any: Any = data.get("trident")
-        if not isinstance(trident_any, dict):
-            return None
-        trident = cast(dict[str, Any], trident_any)
-        levels_any: Any = trident.get("levels_ml")
-        if not isinstance(levels_any, list):
-            return None
-        levels = cast(list[Any], levels_any)
-        if index < 0 or index >= len(levels):
-            return None
-        return levels[index]
-
-    return _get
 
 
 async def async_setup_entry(
@@ -360,13 +77,12 @@ async def async_setup_entry(
         async_add_entities: Callback to add entities.
     """
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
     # Developer toggle: when enabled, only expose a single REST debug sensor.
     if _SIMPLE_REST_SINGLE_SENSOR_MODE:
         async_add_entities([ApexRestDebugSensor(coordinator, entry)])
         return
-
-    host = str(entry.data.get(CONF_HOST, ""))
 
     added_probe_keys: set[str] = set()
     added_outlet_intensity_dids: set[str] = set()
@@ -375,95 +91,39 @@ async def async_setup_entry(
         coordinator_data = coordinator.data or {}
         new_entities: list[SensorEntity] = []
 
-        probes_any = coordinator_data.get("probes", {})
-        if isinstance(probes_any, dict):
-            probes = cast(dict[str, Any], probes_any)
-            for key, probe_any in probes.items():
-                key_str = str(key)
-                if not key_str or key_str in added_probe_keys:
-                    continue
-                probe = (
-                    cast(dict[str, Any], probe_any)
-                    if isinstance(probe_any, dict)
-                    else {}
-                )
-                probe_name = str(probe.get("name") or key_str)
-                probe_type = str(probe.get("type") or "")
-                if probe_type.strip().lower() == "digital":
-                    # Digital probes are represented as open/closed binary sensors.
-                    added_probe_keys.add(key_str)
-                    continue
-                new_entities.append(
-                    ApexProbeSensor(
-                        coordinator,
-                        entry,
-                        ref=_ProbeRef(
-                            key=key_str,
-                            name=_friendly_probe_name(
-                                name=probe_name, probe_type=probe_type
-                            ),
-                        ),
-                    )
-                )
-                added_probe_keys.add(key_str)
+        probe_refs, seen_probe_keys = ApexDiscovery.new_probe_refs(
+            coordinator_data,
+            already_added_keys=added_probe_keys,
+        )
+        new_entities.extend(
+            ApexProbeSensor(coordinator, entry, ref=ref) for ref in probe_refs
+        )
+        added_probe_keys.update(seen_probe_keys)
 
         if new_entities:
             async_add_entities(new_entities)
 
-        outlet_entities: list[SensorEntity] = []
-        outlets_any: Any = coordinator_data.get("outlets", [])
-        if isinstance(outlets_any, list):
-            for outlet_any in cast(list[Any], outlets_any):
-                if not isinstance(outlet_any, dict):
-                    continue
-                outlet = cast(dict[str, Any], outlet_any)
-                did_any: Any = outlet.get("device_id")
-                did = did_any if isinstance(did_any, str) else None
-                if not did or did in added_outlet_intensity_dids:
-                    continue
-
-                intensity_any: Any = outlet.get("intensity")
-                if not isinstance(intensity_any, (int, float)) or isinstance(
-                    intensity_any, bool
-                ):
-                    continue
-
-                outlet_type_any: Any = outlet.get("type")
-                outlet_type = (
-                    outlet_type_any if isinstance(outlet_type_any, str) else None
-                )
-                outlet_name = friendly_outlet_name(
-                    outlet_name=str(outlet.get("name") or did),
-                    outlet_type=outlet_type,
-                )
-
-                outlet_entities.append(
-                    ApexOutletIntensitySensor(
-                        coordinator,
-                        entry,
-                        ref=_OutletIntensityRef(
-                            did=did,
-                            name=f"{outlet_name} Intensity",
-                        ),
-                    )
-                )
-                added_outlet_intensity_dids.add(did)
-
+        outlet_refs, seen_outlet_dids = ApexDiscovery.new_outlet_intensity_refs(
+            coordinator_data,
+            already_added_dids=added_outlet_intensity_dids,
+        )
+        outlet_entities: list[SensorEntity] = [
+            ApexOutletIntensitySensor(coordinator, entry, ref=ref)
+            for ref in outlet_refs
+        ]
         if outlet_entities:
             async_add_entities(outlet_entities)
+        added_outlet_intensity_dids.update(seen_outlet_dids)
 
     _add_probe_and_outlet_entities()
     remove = coordinator.async_add_listener(_add_probe_and_outlet_entities)
     entry.async_on_unload(remove)
 
-    coordinator_data = coordinator.data or {}
-    meta_any = coordinator_data.get("meta", {})
-    meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-    serial_for_ids = str(meta.get("serial") or host or "apex").replace(":", "_")
+    serial_for_ids = ctx.serial_for_ids
 
     diagnostic_entities: list[SensorEntity] = []
-    # Always create diagnostic entities so they exist even if the first poll
-    # falls back to legacy data; values will populate once REST fields appear.
+    # Always create diagnostic entities so they exist even if an early poll
+    # does not include all fields; values populate as data becomes available.
     diagnostic_entities.extend(
         [
             ApexDiagnosticSensor(
@@ -471,64 +131,63 @@ async def async_setup_entry(
                 entry,
                 unique_id=f"{serial_for_ids}_diag_ipaddr".lower(),
                 name="IP Address",
-                icon="mdi:ip-network",
-                value_fn=_network_field("ipaddr"),
+                icon=ICON_IP_NETWORK,
+                value_fn=network_field("ipaddr"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_gateway".lower(),
                 name="Gateway",
-                icon="mdi:router-network",
-                value_fn=_network_field("gateway"),
+                icon=ICON_ROUTER_NETWORK,
+                value_fn=network_field("gateway"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_netmask".lower(),
                 name="Netmask",
-                icon="mdi:ip-network-outline",
-                value_fn=_network_field("netmask"),
+                icon=ICON_IP_NETWORK_OUTLINE,
+                value_fn=network_field("netmask"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_ssid".lower(),
                 name="Wi-Fi SSID",
-                icon="mdi:wifi-settings",
-                value_fn=_network_field("ssid"),
+                icon=ICON_WIFI_SETTINGS,
+                value_fn=network_field("ssid"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_wifi_strength".lower(),
                 name="Wi-Fi Strength",
-                icon="mdi:wifi-strength-4",
+                icon=ICON_WIFI_STRENGTH_4,
                 native_unit=PERCENTAGE,
-                value_fn=_network_field("strength"),
+                value_fn=network_field("strength"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
                 unique_id=f"{serial_for_ids}_diag_wifi_quality".lower(),
                 name="Wi-Fi Quality",
-                icon="mdi:signal",
+                icon=ICON_SIGNAL,
                 native_unit=PERCENTAGE,
-                value_fn=_network_field("quality"),
+                value_fn=network_field("quality"),
             ),
             ApexDiagnosticSensor(
                 coordinator,
                 entry,
-                unique_id=f"{serial_for_ids}_diag_last_alert_statement".lower(),
+                unique_id=f"{serial_for_ids}_diag_alert_last".lower(),
                 name="Last Alert Statement",
-                icon="mdi:alert-circle-outline",
-                value_fn=_section_field("alerts", "last_statement"),
+                icon=ICON_ALERT_CIRCLE_OUTLINE,
+                value_fn=section_field("alerts", "last_statement"),
             ),
         ]
     )
 
-    if diagnostic_entities:
-        async_add_entities(diagnostic_entities)
+    async_add_entities(diagnostic_entities)
 
     added_trident_diags = False
 
@@ -545,17 +204,13 @@ async def async_setup_entry(
         if not trident.get("present"):
             return
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-
         trident_device_info: DeviceInfo | None = None
         trident_abaddr_any: Any = trident.get("abaddr")
         if isinstance(trident_abaddr_any, int):
             trident_device_info = build_trident_device_info(
-                host=host,
-                meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 trident_abaddr=trident_abaddr_any,
                 trident_hwtype=(
                     str(trident.get("hwtype") or "").strip().upper() or None
@@ -567,10 +222,7 @@ async def async_setup_entry(
 
         trident_prefix = "" if trident_device_info is not None else "Trident "
 
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-        )
+        tank_slug = ctx.tank_slug
         trident_addr_slug = (
             f"trident_addr{trident_abaddr_any}"
             if isinstance(trident_abaddr_any, int)
@@ -584,29 +236,29 @@ async def async_setup_entry(
                 unique_id=f"{serial_for_ids}_diag_trident_status".lower(),
                 name=f"{trident_prefix}Status".strip(),
                 suggested_object_id=f"{tank_slug}_{trident_addr_slug}_status",
-                icon="mdi:flask-outline",
-                value_fn=_section_field("trident", "status"),
+                icon=ICON_FLASK_OUTLINE,
+                value_fn=section_field("trident", "status"),
                 entity_category=None,
                 device_info=trident_device_info,
             )
         ]
 
-        # Trident exposes `extra.levels` as a 5-element list.
-        # Best-known mapping (see: itchannel/apex-ha#51):
+        # Trident exposes `levels_ml` as a 5-element list.
+        # Mapping used by this integration:
         # - index 0: waste used (counts up, resets to 0)
         # - indices 2-4: reagent C/B/A remaining in mL (count down, reset to ~250)
-        # - index 1: unknown/aux value (varies by firmware)
+        # - index 1: auxiliary value
         levels_any: Any = trident.get("levels_ml")
         if isinstance(levels_any, list):
             levels = cast(list[Any], levels_any)
             for i in range(len(levels)):
                 name = f"{trident_prefix}Container {i + 1} Level".strip()
-                icon = "mdi:beaker-outline"
+                icon = ICON_BEAKER_OUTLINE
                 state_class: SensorStateClass | None = SensorStateClass.TOTAL
 
                 if i == 0:
                     name = f"{trident_prefix}Waste Used".strip()
-                    icon = "mdi:trash-can-outline"
+                    icon = ICON_TRASH_CAN_OUTLINE
                     state_class = SensorStateClass.TOTAL_INCREASING
                     object_suffix = "waste_used"
                 elif i == 1:
@@ -635,7 +287,7 @@ async def async_setup_entry(
                         native_unit=UnitOfVolume.MILLILITERS,
                         device_class=SensorDeviceClass.VOLUME,
                         state_class=state_class,
-                        value_fn=_trident_level_ml(i),
+                        value_fn=trident_level_ml(i),
                         entity_category=None,
                         device_info=trident_device_info,
                     )
@@ -656,7 +308,7 @@ class ApexRestDebugSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:bug-outline"
+    _attr_icon = ICON_BUG_OUTLINE
 
     def __init__(
         self,
@@ -667,17 +319,14 @@ class ApexRestDebugSensor(SensorEntity):
         self._coordinator = coordinator
         self._entry = entry
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any = (coordinator.data or {}).get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
-        self._attr_unique_id = f"{serial}_rest_debug_keys".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_rest_debug_keys".lower()
         self._attr_name = "REST Status Keys"
         self._attr_device_info = build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._refresh_attrs()
@@ -766,8 +415,7 @@ class ApexDiagnosticSensor(SensorEntity):
         self._entry = entry
         self._value_fn = value_fn
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta = cast(dict[str, Any], (coordinator.data or {}).get("meta", {}))
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
         self._attr_unique_id = unique_id
         self._attr_name = name
@@ -779,9 +427,9 @@ class ApexDiagnosticSensor(SensorEntity):
         self._attr_state_class = state_class
         self._attr_entity_category = entity_category
         self._attr_device_info = device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._attr_available = bool(
@@ -790,7 +438,11 @@ class ApexDiagnosticSensor(SensorEntity):
         self._attr_native_value = self._read_value()
 
     def _read_value(self) -> StateType:
-        """Read current value from coordinator data."""
+        """Read current value from coordinator data.
+
+        Returns:
+            Current sensor value in Home Assistant native format.
+        """
         data = self._coordinator.data or {}
         value = self._value_fn(data)
         if value is None:
@@ -798,11 +450,11 @@ class ApexDiagnosticSensor(SensorEntity):
         # For numeric diagnostics (percentage, volumes, etc.), prefer native numeric
         # values so HA can handle units/statistics.
         if self._attr_native_unit_of_measurement is not None:
-            numeric = _as_float(value)
+            numeric = as_float(value)
             if numeric is not None:
                 return cast(StateType, numeric)
         if self._attr_native_unit_of_measurement == PERCENTAGE:
-            return _as_float(value)
+            return as_float(value)
         return str(value)
 
     def _handle_coordinator_update(self) -> None:
@@ -832,7 +484,7 @@ class ApexProbeSensor(SensorEntity):
         coordinator: ApexNeptuneDataUpdateCoordinator,
         entry: ConfigEntry,
         *,
-        ref: _ProbeRef,
+        ref: ProbeRef,
     ) -> None:
         """Initialize the probe sensor.
 
@@ -847,22 +499,15 @@ class ApexProbeSensor(SensorEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        host = str(entry.data.get(CONF_HOST, ""))
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
         coordinator_data = coordinator.data or {}
-        meta = cast(dict[str, Any], coordinator_data.get("meta", {}))
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
 
-        self._attr_unique_id = f"{serial}_probe_{ref.key}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_probe_{ref.key}".lower()
         self._attr_name = ref.name
 
         # Suggest entity ids that remain unique across multiple tanks while
         # keeping friendly names clean.
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp
-            or str(meta.get("hostname") or "").strip()
-            or str(entry.title or "tank").strip()
-        )
+        tank_slug = ctx.tank_slug_with_entry_title(entry.title)
         key_slug = str(ref.key or "").strip().lower() or slugify(ref.name) or "probe"
         self._attr_suggested_object_id = f"{tank_slug}_probe_{key_slug}"
 
@@ -881,9 +526,9 @@ class ApexProbeSensor(SensorEntity):
 
         module_device_info: DeviceInfo | None = (
             build_aquabus_child_device_info_from_data(
-                host=host,
-                controller_meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                controller_meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 data=coordinator_data,
                 module_abaddr=module_abaddr,
                 module_hwtype_hint=module_hwtype_hint,
@@ -893,9 +538,9 @@ class ApexProbeSensor(SensorEntity):
         )
 
         self._attr_device_info = module_device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
@@ -904,7 +549,11 @@ class ApexProbeSensor(SensorEntity):
         self._attr_native_value = self._read_native_value()
 
     def _read_probe(self) -> dict[str, Any]:
-        """Return the current probe dict from coordinator data."""
+        """Return the current probe dict from coordinator data.
+
+        Returns:
+            Probe dict for this ref, or an empty dict if missing.
+        """
         coordinator_data = self._coordinator.data or {}
         probes_any = coordinator_data.get("probes", {})
         if not isinstance(probes_any, dict):
@@ -918,9 +567,9 @@ class ApexProbeSensor(SensorEntity):
         p = self._read_probe()
         probe_type = str(p.get("type") or "").strip()
         raw_value: Any = p.get("value")
-        value_f = _as_float(raw_value)
+        value_f = as_float(raw_value)
 
-        unit, device_class, state_class = _units_and_meta(
+        unit, device_class, state_class = units_and_meta(
             probe_name=self._ref.name,
             probe_type=probe_type,
             value=value_f,
@@ -929,10 +578,14 @@ class ApexProbeSensor(SensorEntity):
         self._attr_native_unit_of_measurement = unit
         self._attr_device_class = device_class
         self._attr_state_class = state_class
-        self._attr_icon = _icon_for_probe_type(probe_type, self._ref.name)
+        self._attr_icon = icon_for_probe_type(probe_type, self._ref.name)
 
     def _read_native_value(self) -> StateType:
-        """Read the current probe value from the coordinator."""
+        """Read the current probe value from the coordinator.
+
+        Returns:
+            Current probe value in Home Assistant native format.
+        """
         p = self._read_probe()
         probe_type = str(p.get("type") or "").strip().lower()
 
@@ -943,7 +596,7 @@ class ApexProbeSensor(SensorEntity):
 
         # For known numeric probe types, coerce strings to float for HA.
         if probe_type in {"amps", "temp", "tmp", "ph", "alk", "ca", "mg", "cond"}:
-            coerced = _as_float(out)
+            coerced = as_float(out)
             if coerced is not None:
                 return cast(StateType, coerced)
 
@@ -987,7 +640,7 @@ class ApexOutletIntensitySensor(SensorEntity):
         coordinator: ApexNeptuneDataUpdateCoordinator,
         entry: ConfigEntry,
         *,
-        ref: _OutletIntensityRef,
+        ref: OutletIntensityRef,
     ) -> None:
         super().__init__()
         self._coordinator = coordinator
@@ -995,28 +648,22 @@ class ApexOutletIntensitySensor(SensorEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        host = str(entry.data.get(CONF_HOST, ""))
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
         coordinator_data = coordinator.data or {}
-        meta_any: Any = coordinator_data.get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
 
-        self._attr_unique_id = f"{serial}_outlet_intensity_{ref.did}".lower()
+        self._attr_unique_id = (
+            f"{ctx.serial_for_ids}_outlet_intensity_{ref.did}".lower()
+        )
         self._attr_name = ref.name
 
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp
-            or str(meta.get("hostname") or "").strip()
-            or str(entry.title or "tank").strip()
-        )
+        tank_slug = ctx.tank_slug_with_entry_title(entry.title)
         did_slug = str(ref.did or "").strip().lower() or "outlet"
         self._attr_suggested_object_id = f"{tank_slug}_outlet_{did_slug}_intensity"
 
         outlet = self._find_outlet()
         outlet_type_any: Any = outlet.get("type")
         outlet_type = outlet_type_any if isinstance(outlet_type_any, str) else None
-        self._attr_icon = icon_for_outlet_type(outlet_type) or "mdi:brightness-percent"
+        self._attr_icon = icon_for_outlet_type(outlet_type) or ICON_BRIGHTNESS_PERCENT
 
         module_abaddr_any: Any = outlet.get("module_abaddr")
         module_abaddr = (
@@ -1025,9 +672,9 @@ class ApexOutletIntensitySensor(SensorEntity):
 
         module_device_info: DeviceInfo | None = (
             build_aquabus_child_device_info_from_data(
-                host=host,
-                controller_meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                controller_meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 data=coordinator_data,
                 module_abaddr=module_abaddr,
             )
@@ -1036,9 +683,9 @@ class ApexOutletIntensitySensor(SensorEntity):
         )
 
         self._attr_device_info = module_device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._attr_available = bool(
@@ -1082,7 +729,7 @@ class ApexOutletIntensitySensor(SensorEntity):
         outlet = self._find_outlet()
         outlet_type_any: Any = outlet.get("type")
         outlet_type = outlet_type_any if isinstance(outlet_type_any, str) else None
-        self._attr_icon = icon_for_outlet_type(outlet_type) or "mdi:brightness-percent"
+        self._attr_icon = icon_for_outlet_type(outlet_type) or ICON_BRIGHTNESS_PERCENT
         self._refresh()
         self.async_write_ha_state()
 

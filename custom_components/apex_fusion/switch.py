@@ -7,7 +7,7 @@ Control is REST-first:
 - PUT  /rest/status/feed/<id>   (start feed)
 - PUT  /rest/status/feed/0      (cancel feed)
 
-With a legacy fallback:
+Fallback endpoint:
 - POST /cgi-bin/status.cgi with application/x-www-form-urlencoded
     - FeedCycle=Feed&FeedSel=<0-3|5>&noResponse=1
 """
@@ -27,12 +27,15 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .apex_fusion import ApexFusionContext
+from .apex_fusion.util import to_int
 from .const import (
     CONF_HOST,
     CONF_PASSWORD,
     CONF_USERNAME,
     DEFAULT_TIMEOUT_SECONDS,
     DOMAIN,
+    ICON_SHAKER,
     LOGGER_NAME,
 )
 from .coordinator import (
@@ -46,6 +49,13 @@ _LOGGER = logging.getLogger(LOGGER_NAME)
 
 @dataclass(frozen=True)
 class _FeedRef:
+    """Reference describing a Feed Mode switch.
+
+    Attributes:
+        did: Feed id used in controller paths/payloads.
+        name: Display name for the switch.
+    """
+
     did: str
     name: str
 
@@ -69,18 +79,6 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _to_int(value: Any) -> int | None:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str):
-        t = value.strip()
-        if t.isdigit():
-            return int(t)
-    return None
-
-
 class ApexFeedModeSwitch(SwitchEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -100,18 +98,16 @@ class ApexFeedModeSwitch(SwitchEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta = cast(dict[str, Any], (coordinator.data or {}).get("meta", {}))
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        self._attr_unique_id = f"{serial}_feed_{ref.did}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_feed_{ref.did}".lower()
         self._attr_name = ref.name
-        self._attr_icon = "mdi:shaker"
+        self._attr_icon = ICON_SHAKER
 
         self._attr_device_info = build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
         self._refresh_from_coordinator()
@@ -126,8 +122,8 @@ class ApexFeedModeSwitch(SwitchEntity):
             cast(dict[str, Any], feed_any) if isinstance(feed_any, dict) else {}
         )
 
-        active_id = _to_int(feed.get("name"))
-        self._attr_is_on = active_id == _to_int(self._ref.did)
+        active_id = to_int(feed.get("name"))
+        self._attr_is_on = active_id == to_int(self._ref.did)
 
         attrs: dict[str, Any] = {}
         if feed:
@@ -149,7 +145,7 @@ class ApexFeedModeSwitch(SwitchEntity):
 
         if not password:
             raise HomeAssistantError(
-                "Password is required to control feed modes via REST/legacy CGI"
+                "Password is required to control feed modes via REST/CGI"
             )
 
         base_url = build_base_url(host)
@@ -173,7 +169,7 @@ class ApexFeedModeSwitch(SwitchEntity):
             )
 
         async def _legacy_post_status_cgi() -> None:
-            # FeedSel mapping for legacy controllers:
+            # FeedSel mapping for the CGI endpoint:
             # A-D => 0-3, Cancel => 5
             feed_sel_map = {"1": "0", "2": "1", "3": "2", "4": "3"}
             feed_sel = "5"
@@ -183,7 +179,7 @@ class ApexFeedModeSwitch(SwitchEntity):
             data = f"FeedCycle=Feed&FeedSel={feed_sel}&noResponse=1"
             url = f"{base_url}/cgi-bin/status.cgi"
             _LOGGER.debug(
-                "Legacy CGI feed control host=%s did=%s active=%s FeedSel=%s",
+                "CGI feed control host=%s did=%s active=%s FeedSel=%s",
                 host,
                 self._ref.did,
                 active,
@@ -199,11 +195,11 @@ class ApexFeedModeSwitch(SwitchEntity):
                 ) as resp:
                     if resp.status in (401, 403):
                         raise HomeAssistantError(
-                            "Invalid auth for Apex legacy status.cgi feed control"
+                            "Invalid auth for Apex status.cgi feed control"
                         )
                     if resp.status == 404:
                         raise HomeAssistantError(
-                            "Legacy feed control endpoint not found on controller"
+                            "Feed control endpoint not found on controller"
                         )
                     resp.raise_for_status()
                     await resp.text()
@@ -217,8 +213,8 @@ class ApexFeedModeSwitch(SwitchEntity):
         except FileNotFoundError:
             await _legacy_post_status_cgi()
         except HomeAssistantError as err:
-            # If REST failed due to auth/rate-limit/transient issues, try legacy as a last resort.
-            _LOGGER.debug("REST feed control failed; trying legacy: %s", err)
+            # If REST failed due to auth/rate-limit/transient issues, try the CGI endpoint.
+            _LOGGER.debug("REST feed control failed; trying CGI endpoint: %s", err)
             await _legacy_post_status_cgi()
 
         await self._coordinator.async_request_refresh()

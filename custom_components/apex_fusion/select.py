@@ -18,7 +18,6 @@ Control is via the local REST API:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from homeassistant.components.select import SelectEntity
@@ -26,10 +25,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify
 
+from .apex_fusion import ApexFusionContext
+from .apex_fusion.discovery import ApexDiscovery, OutletRef
+from .apex_fusion.outputs import OutletMode
 from .const import (
-    CONF_HOST,
     CONF_PASSWORD,
     DOMAIN,
     LOGGER_NAME,
@@ -38,81 +38,12 @@ from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_aquabus_child_device_info_from_data,
     build_device_info,
-    clean_hostname_display,
     module_abaddr_from_input_did,
     normalize_module_hwtype_from_outlet_type,
     unambiguous_module_abaddr_from_config,
 )
-from .sensor import friendly_outlet_name
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
-
-_OPTIONS: list[str] = ["Off", "Auto", "On"]
-
-
-@dataclass(frozen=True)
-class _OutletRef:
-    did: str
-    name: str
-
-
-def _is_energized_state(raw_state: str) -> bool:
-    return (raw_state or "").strip().upper() in {"AON", "ON", "TBL"}
-
-
-def _is_selectable_outlet(outlet: dict[str, Any]) -> bool:
-    raw_state = str(outlet.get("state") or "").strip().upper()
-    return raw_state in {"AON", "AOF", "TBL", "ON", "OFF"}
-
-
-def _option_from_raw_state(raw_state: str) -> str | None:
-    t = (raw_state or "").strip().upper()
-    if t in {"ON"}:
-        return "On"
-    if t in {"OFF"}:
-        return "Off"
-    if t in {"AON", "AOF", "TBL"}:
-        return "Auto"
-    return None
-
-
-def _effective_state_from_raw_state(raw_state: str) -> str | None:
-    t = (raw_state or "").strip().upper()
-    if not t:
-        return None
-    return "On" if _is_energized_state(t) else "Off"
-
-
-def _mode_from_option(option: str) -> str:
-    t = (option or "").strip().lower()
-    if t == "auto":
-        return "AUTO"
-    if t == "on":
-        return "ON"
-    if t == "off":
-        return "OFF"
-    raise HomeAssistantError(f"Invalid option: {option}")
-
-
-def _icon_for_outlet_select(outlet_name: str, outlet_type: str | None) -> str | None:
-    """Return an icon for a selectable output.
-
-    These SelectEntities control an output mode (Off/Auto/On). Avoid outlet/power-socket
-    icons so they don't get confused with EB (Energy Bar) outlet entities.
-    """
-
-    name = (outlet_name or "").strip().lower()
-    t = (outlet_type or "").strip().upper()
-
-    if any(token in name for token in ("alarm", "warn")):
-        return "mdi:alarm"
-    if "PUMP" in t:
-        return "mdi:pump"
-    if "LIGHT" in t:
-        return "mdi:lightbulb"
-    if "HEATER" in t:
-        return "mdi:radiator"
-    return "mdi:toggle-switch-outline"
 
 
 async def async_setup_entry(
@@ -124,43 +55,18 @@ async def async_setup_entry(
 
     def _add_outlet_selects() -> None:
         data = coordinator.data or {}
-        outlets_any = data.get("outlets", [])
-        new_entities: list[SelectEntity] = []
+        refs, seen_dids = ApexDiscovery.new_outlet_select_refs(
+            data,
+            already_added_dids=added_dids,
+        )
 
-        if isinstance(outlets_any, list):
-            for outlet_any in cast(list[Any], outlets_any):
-                if not isinstance(outlet_any, dict):
-                    continue
-                outlet = cast(dict[str, Any], outlet_any)
-                did_any = outlet.get("device_id")
-                did = did_any if isinstance(did_any, str) else None
-                if not did or did in added_dids:
-                    continue
-                if not _is_selectable_outlet(outlet):
-                    continue
-
-                outlet_type_any: Any = outlet.get("type")
-                outlet_type = (
-                    outlet_type_any if isinstance(outlet_type_any, str) else None
-                )
-
-                outlet_name = friendly_outlet_name(
-                    outlet_name=str(outlet.get("name") or did),
-                    outlet_type=outlet_type,
-                )
-
-                new_entities.append(
-                    ApexOutletModeSelect(
-                        hass,
-                        coordinator,
-                        entry,
-                        ref=_OutletRef(did=did, name=outlet_name),
-                    )
-                )
-                added_dids.add(did)
-
+        new_entities: list[SelectEntity] = [
+            ApexOutletModeSelect(hass, coordinator, entry, ref=ref) for ref in refs
+        ]
         if new_entities:
             async_add_entities(new_entities)
+
+        added_dids.update(seen_dids)
 
     _add_outlet_selects()
     remove = coordinator.async_add_listener(_add_outlet_selects)
@@ -177,7 +83,7 @@ class ApexOutletModeSelect(SelectEntity):
         coordinator: ApexNeptuneDataUpdateCoordinator,
         entry: ConfigEntry,
         *,
-        ref: _OutletRef,
+        ref: OutletRef,
     ) -> None:
         super().__init__()
         self.hass = hass
@@ -186,19 +92,12 @@ class ApexOutletModeSelect(SelectEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta = cast(dict[str, Any], (coordinator.data or {}).get("meta", {}))
-        serial = str(meta.get("serial") or host or "apex").replace(":", "_")
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
-        self._attr_unique_id = f"{serial}_outlet_mode_{ref.did}".lower()
+        self._attr_unique_id = f"{ctx.serial_for_ids}_outlet_mode_{ref.did}".lower()
         self._attr_name = ref.name
 
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp
-            or str(meta.get("hostname") or "").strip()
-            or str(entry.title or "tank").strip()
-        )
+        tank_slug = ctx.tank_slug_with_entry_title(entry.title)
         did_slug = str(ref.did or "").strip().lower() or "outlet"
         self._attr_suggested_object_id = f"{tank_slug}_outlet_{did_slug}_mode"
 
@@ -230,9 +129,9 @@ class ApexOutletModeSelect(SelectEntity):
 
         module_device_info = (
             build_aquabus_child_device_info_from_data(
-                host=host,
-                controller_meta=meta,
-                controller_device_identifier=coordinator.device_identifier,
+                host=ctx.host,
+                controller_meta=ctx.meta,
+                controller_device_identifier=ctx.controller_device_identifier,
                 data=coordinator.data or {},
                 module_abaddr=module_abaddr,
                 module_hwtype_hint=module_hwtype_hint,
@@ -242,17 +141,17 @@ class ApexOutletModeSelect(SelectEntity):
         )
 
         self._attr_device_info = module_device_info or build_device_info(
-            host=host,
-            meta=meta,
-            device_identifier=coordinator.device_identifier,
+            host=ctx.host,
+            meta=ctx.meta,
+            device_identifier=ctx.controller_device_identifier,
         )
 
-        self._attr_options = list(_OPTIONS)
+        self._attr_options = list(OutletMode.OPTIONS)
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
         )
         self._attr_current_option = None
-        self._attr_icon = _icon_for_outlet_select(ref.name, outlet_type)
+        self._attr_icon = OutletMode.icon_for_outlet_select(ref.name, outlet_type)
         self._refresh_from_coordinator()
 
     def _find_outlet(self) -> dict[str, Any]:
@@ -278,10 +177,10 @@ class ApexOutletModeSelect(SelectEntity):
 
         attrs: dict[str, Any] = {
             "state_code": raw_state or None,
-            "mode": _mode_from_option(self._attr_current_option)
+            "mode": OutletMode.mode_from_option(self._attr_current_option)
             if self._attr_current_option
             else None,
-            "effective_state": _effective_state_from_raw_state(raw_state),
+            "effective_state": OutletMode.effective_state_from_raw_state(raw_state),
         }
 
         # Preserve debug visibility from the previous raw-state sensor.
@@ -327,15 +226,15 @@ class ApexOutletModeSelect(SelectEntity):
         self._attr_available = bool(
             getattr(self._coordinator, "last_update_success", True)
         )
-        self._attr_current_option = _option_from_raw_state(raw_state)
+        self._attr_current_option = OutletMode.option_from_raw_state(raw_state)
         self._attr_extra_state_attributes = self._read_extra_attrs()
         outlet = self._find_outlet()
-        self._attr_icon = _icon_for_outlet_select(
+        self._attr_icon = OutletMode.icon_for_outlet_select(
             self._ref.name, cast(str | None, outlet.get("type"))
         )
 
     async def async_select_option(self, option: str) -> None:
-        mode = _mode_from_option(option)
+        mode = OutletMode.mode_from_option(option)
         await self._async_set_mode(mode)
 
     async def _async_set_mode(self, mode: str) -> None:

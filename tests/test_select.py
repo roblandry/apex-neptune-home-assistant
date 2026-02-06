@@ -1,4 +1,8 @@
-"""Tests for Apex Fusion select platform."""
+"""Tests for the Apex Fusion select platform.
+
+These tests validate outlet-mode selection, REST request behavior, and fallback
+error handling via stubbed coordinator/session objects.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,16 @@ from custom_components.apex_fusion.const import (
 
 @dataclass
 class _CoordinatorStub:
+    """Minimal coordinator stub used by select-platform tests.
+
+    Attributes:
+        data: Coordinator payload.
+        last_update_success: Whether the last update succeeded.
+        device_identifier: Device identifier used by device info helpers.
+        async_request_refresh: Stubbed refresh coroutine.
+        async_rest_put_json: Stubbed REST PUT coroutine.
+    """
+
     data: dict[str, Any]
     last_update_success: bool = True
     device_identifier: str = "TEST"
@@ -27,12 +41,21 @@ class _CoordinatorStub:
     async_rest_put_json: AsyncMock = AsyncMock()
 
     def __post_init__(self) -> None:
+        """Initialize mutable listener/call tracking fields."""
         self._listeners: list[Callable[[], None]] = []
         self._disable_rest_calls: list[dict[str, Any]] = []
 
     def async_add_listener(
         self, update_callback: Callable[[], None]
     ) -> Callable[[], None]:
+        """Register an update listener.
+
+        Args:
+            update_callback: Callback invoked when the coordinator updates.
+
+        Returns:
+            Callable that unregisters the listener.
+        """
         self._listeners.append(update_callback)
 
         def _unsub() -> None:
@@ -41,48 +64,103 @@ class _CoordinatorStub:
         return _unsub
 
     def fire_update(self) -> None:
+        """Invoke all registered listeners."""
         for cb in list(self._listeners):
             cb()
 
     def _disable_rest(self, *, seconds: float, reason: str) -> None:
+        """Record a REST-disable request.
+
+        Args:
+            seconds: Duration to disable REST.
+            reason: Reason code.
+
+        Returns:
+            None.
+        """
         self._disable_rest_calls.append({"seconds": seconds, "reason": reason})
 
 
 class _Morsel:
+    """Cookie morsel stub with a `value` attribute."""
+
     def __init__(self, value: str):
         self.value = value
 
 
 class _CookieJar:
+    """Cookie jar stub that can return a connect.sid cookie."""
+
     def __init__(self, sid: str | None):
         self._sid = sid
 
     def filter_cookies(self, _url: Any) -> dict[str, Any]:
+        """Return cookies for a URL.
+
+        Args:
+            _url: URL value (unused).
+
+        Returns:
+            Dict containing `connect.sid` when configured.
+        """
         if self._sid:
             return {"connect.sid": _Morsel(self._sid)}
         return {}
 
 
 class _Resp:
+    """aiohttp-like response stub used by session fakes."""
+
     def __init__(self, status: int, text: str = "", headers: Any | None = None):
         self.status = status
         self._text = text
         self.headers = headers if headers is not None else {}
 
     async def text(self) -> str:
+        """Return the configured response body.
+
+        Returns:
+            Response body text.
+        """
         return self._text
 
     def raise_for_status(self) -> None:
+        """No-op status raiser for stubbed responses.
+
+        Returns:
+            None.
+        """
         return None
 
     async def __aenter__(self):
+        """Enter async context manager.
+
+        Returns:
+            This response instance.
+        """
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        """Exit async context manager.
+
+        Args:
+            exc_type: Exception type, if any.
+            exc: Exception instance, if any.
+            tb: Traceback, if any.
+
+        Returns:
+            False to propagate exceptions.
+        """
         return False
 
 
 class _Session:
+    """aiohttp-like client session stub.
+
+    This fake session supports `post` and `put` calls by iterating through
+    preconfigured response sequences.
+    """
+
     def __init__(
         self,
         *,
@@ -101,12 +179,38 @@ class _Session:
         self.put_calls: list[dict[str, Any]] = []
 
     def post(self, url: str, **kwargs: Any) -> _Resp:
+        """Return the next configured POST response.
+
+        Args:
+            url: Request URL.
+            **kwargs: Request keyword args.
+
+        Returns:
+            Response stub.
+
+        Raises:
+            Exception: If `post_raises` was configured.
+            StopIteration: If no more configured responses exist.
+        """
         self.post_calls.append({"url": url, **kwargs})
         if self._post_raises is not None:
             raise self._post_raises
         return next(self._post_iter)
 
     def put(self, url: str, **kwargs: Any) -> _Resp:
+        """Return the next configured PUT response.
+
+        Args:
+            url: Request URL.
+            **kwargs: Request keyword args.
+
+        Returns:
+            Response stub.
+
+        Raises:
+            Exception: If `put_raises` was configured.
+            StopIteration: If no more configured responses exist.
+        """
         self.put_calls.append({"url": url, **kwargs})
         if self._put_raises is not None:
             raise self._put_raises
@@ -114,47 +218,56 @@ class _Session:
 
 
 class _HeadersRaises:
+    """Header mapping stub that raises on access."""
+
     def get(self, _key: str) -> Any:  # pragma: no cover
         raise RuntimeError("boom")
 
 
 def test_select_helpers_cover_all_branches():
-    from custom_components.apex_fusion import select
+    from custom_components.apex_fusion.apex_fusion.outputs import OutletMode
 
-    assert select._is_selectable_outlet({"state": "AON"}) is True
-    assert select._is_selectable_outlet({"state": "AOF"}) is True
-    assert select._is_selectable_outlet({"state": "TBL"}) is True
-    assert select._is_selectable_outlet({"state": "ON"}) is True
-    assert select._is_selectable_outlet({"state": "OFF"}) is True
-    assert select._is_selectable_outlet({"state": "XXX"}) is False
+    assert OutletMode.is_selectable_outlet({"state": "AON"}) is True
+    assert OutletMode.is_selectable_outlet({"state": "AOF"}) is True
+    assert OutletMode.is_selectable_outlet({"state": "TBL"}) is True
+    assert OutletMode.is_selectable_outlet({"state": "ON"}) is True
+    assert OutletMode.is_selectable_outlet({"state": "OFF"}) is True
+    assert OutletMode.is_selectable_outlet({"state": "XXX"}) is False
 
-    assert select._option_from_raw_state("ON") == "On"
-    assert select._option_from_raw_state("OFF") == "Off"
-    assert select._option_from_raw_state("AON") == "Auto"
-    assert select._option_from_raw_state("AOF") == "Auto"
-    assert select._option_from_raw_state("TBL") == "Auto"
-    assert select._option_from_raw_state("???") is None
+    assert OutletMode.option_from_raw_state("ON") == "On"
+    assert OutletMode.option_from_raw_state("OFF") == "Off"
+    assert OutletMode.option_from_raw_state("AON") == "Auto"
+    assert OutletMode.option_from_raw_state("AOF") == "Auto"
+    assert OutletMode.option_from_raw_state("TBL") == "Auto"
+    assert OutletMode.option_from_raw_state("???") is None
 
-    assert select._effective_state_from_raw_state("") is None
-    assert select._effective_state_from_raw_state("ON") == "On"
-    assert select._effective_state_from_raw_state("AON") == "On"
-    assert select._effective_state_from_raw_state("TBL") == "On"
-    assert select._effective_state_from_raw_state("OFF") == "Off"
-    assert select._effective_state_from_raw_state("AOF") == "Off"
+    assert OutletMode.effective_state_from_raw_state("") is None
+    assert OutletMode.effective_state_from_raw_state("ON") == "On"
+    assert OutletMode.effective_state_from_raw_state("AON") == "On"
+    assert OutletMode.effective_state_from_raw_state("TBL") == "On"
+    assert OutletMode.effective_state_from_raw_state("OFF") == "Off"
+    assert OutletMode.effective_state_from_raw_state("AOF") == "Off"
 
-    assert select._mode_from_option("Auto") == "AUTO"
-    assert select._mode_from_option("On") == "ON"
-    assert select._mode_from_option("Off") == "OFF"
+    assert OutletMode.mode_from_option("Auto") == "AUTO"
+    assert OutletMode.mode_from_option("On") == "ON"
+    assert OutletMode.mode_from_option("Off") == "OFF"
     with pytest.raises(HomeAssistantError):
-        select._mode_from_option("nope")
+        OutletMode.mode_from_option("nope")
 
-    assert select._icon_for_outlet_select("Alarm 1 2", "EB832") == "mdi:alarm"
-    assert select._icon_for_outlet_select("Warn Outlet", "EB832") == "mdi:alarm"
-    assert select._icon_for_outlet_select("AI Nero", "MXMPump|AI|Nero5") == "mdi:pump"
-    assert select._icon_for_outlet_select("Light", "SomeLightType") == "mdi:lightbulb"
-    assert select._icon_for_outlet_select("Heater", "SomeHeaterType") == "mdi:radiator"
+    assert OutletMode.icon_for_outlet_select("Alarm 1 2", "EB832") == "mdi:alarm"
+    assert OutletMode.icon_for_outlet_select("Warn Outlet", "EB832") == "mdi:alarm"
     assert (
-        select._icon_for_outlet_select("Something", "") == "mdi:toggle-switch-outline"
+        OutletMode.icon_for_outlet_select("AI Nero", "MXMPump|AI|Nero5") == "mdi:pump"
+    )
+    assert (
+        OutletMode.icon_for_outlet_select("Light", "SomeLightType") == "mdi:lightbulb"
+    )
+    assert (
+        OutletMode.icon_for_outlet_select("Heater", "SomeHeaterType") == "mdi:radiator"
+    )
+    assert (
+        OutletMode.icon_for_outlet_select("Something", "")
+        == "mdi:toggle-switch-outline"
     )
 
 
@@ -240,13 +353,14 @@ async def test_select_entity_attributes_include_raw_and_mxm(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="AI Nero 5 (Nero 5 F)"),
+        ref=OutletRef(did="O1", name="AI Nero 5 (Nero 5 F)"),
     )
 
     ent.async_write_ha_state = lambda *args, **kwargs: None
@@ -293,13 +407,14 @@ async def test_select_entity_attributes_extract_percent_from_status_list(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="SerialOut"),
+        ref=OutletRef(did="O1", name="SerialOut"),
     )
     ent.async_write_ha_state = lambda *args, **kwargs: None
     await ent.async_added_to_hass()
@@ -342,13 +457,14 @@ async def test_select_entity_attaches_to_module_device_when_unique_mconf_match(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     assert ent.device_info is not None
@@ -384,13 +500,14 @@ async def test_select_entity_falls_back_to_controller_when_ambiguous_mconf(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     assert ent.device_info is not None
@@ -424,13 +541,14 @@ async def test_select_entity_attaches_mxm_outlets_to_mxm_module_when_unique(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="AI Nero 5"),
+        ref=OutletRef(did="O1", name="AI Nero 5"),
     )
 
     assert ent.device_info is not None
@@ -454,13 +572,14 @@ async def test_select_find_outlet_handles_non_list_and_non_dict(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
     assert ent._find_outlet() == {}
     assert ent._read_raw_state() == ""
@@ -472,7 +591,7 @@ async def test_select_find_outlet_handles_non_list_and_non_dict(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="NO_MATCH", name="Outlet X"),
+        ref=OutletRef(did="NO_MATCH", name="Outlet X"),
     )
     assert ent2._find_outlet() == {}
 
@@ -494,13 +613,14 @@ async def test_select_control_requires_password(hass, enable_custom_integrations
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     with pytest.raises(HomeAssistantError, match="Password is required"):
@@ -526,13 +646,14 @@ async def test_select_control_invalid_mode_raises(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     with pytest.raises(HomeAssistantError, match="Invalid outlet mode"):
@@ -558,13 +679,14 @@ async def test_select_control_uses_existing_cookie_sid_and_put_success(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     await ent.async_select_option("On")
@@ -595,13 +717,14 @@ async def test_select_control_login_404_raises(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     coordinator.async_rest_put_json = AsyncMock(side_effect=FileNotFoundError())
@@ -632,13 +755,14 @@ async def test_select_control_coordinator_error_propagates(
         side_effect=HomeAssistantError("Not authorized to control output")
     )
 
-    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
         hass,
         cast(Any, coordinator),
         cast(Any, entry),
-        ref=_OutletRef(did="O1", name="Outlet 1"),
+        ref=OutletRef(did="O1", name="Outlet 1"),
     )
 
     with pytest.raises(HomeAssistantError, match="Not authorized"):

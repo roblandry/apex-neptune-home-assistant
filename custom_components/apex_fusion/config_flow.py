@@ -1,4 +1,8 @@
-"""Config flow for Apex Fusion (Local)."""
+"""Config flow for the Apex Fusion (Local) integration.
+
+This module implements configuration and re-auth flows and performs
+connectivity validation against controller endpoints.
+"""
 
 from __future__ import annotations
 
@@ -82,7 +86,14 @@ STEP_REAUTH_SCHEMA = vol.Schema(
 
 
 def _step_reconfigure_schema(existing: dict[str, Any]) -> vol.Schema:
-    """Build the reconfigure schema with sensible defaults."""
+    """Build the reconfigure schema with sensible defaults.
+
+    Args:
+        existing: Existing config entry data.
+
+    Returns:
+        Voluptuous schema used to prompt for updated host/credentials.
+    """
     host_default = _normalize_host(str(existing.get(CONF_HOST, "")))
     username_default = str(
         existing.get(CONF_USERNAME, DEFAULT_USERNAME) or DEFAULT_USERNAME
@@ -99,7 +110,14 @@ def _step_reconfigure_schema(existing: dict[str, Any]) -> vol.Schema:
 
 
 def _extract_hostname_from_status_obj(status_obj: dict[str, Any]) -> str | None:
-    """Best-effort hostname extraction from various REST status JSON shapes."""
+    """Extract hostname from status JSON payloads.
+
+    Args:
+        status_obj: Parsed status JSON mapping.
+
+    Returns:
+        Hostname string when present; otherwise `None`.
+    """
 
     def _coerce(v: Any) -> str | None:
         if isinstance(v, str) and v.strip():
@@ -171,14 +189,22 @@ def _normalize_host(host: str) -> str:
 
 
 class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
+    """Error raised when the controller cannot be reached."""
 
 
 class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+    """Error raised when authentication fails."""
 
 
 def _coerce_serial(candidate: Any) -> str | None:
+    """Coerce a serial candidate into a non-empty string.
+
+    Args:
+        candidate: Candidate value.
+
+    Returns:
+        Serial string when coercible; otherwise `None`.
+    """
     if isinstance(candidate, str) and candidate.strip():
         return candidate.strip()
     if isinstance(candidate, int):
@@ -187,7 +213,14 @@ def _coerce_serial(candidate: Any) -> str | None:
 
 
 def _extract_serial_from_status_obj(status_obj: dict[str, Any]) -> str | None:
-    """Best-effort serial extraction from various status JSON shapes."""
+    """Extract serial from status JSON payloads.
+
+    Args:
+        status_obj: Parsed status JSON mapping.
+
+    Returns:
+        Serial string when present; otherwise `None`.
+    """
 
     def _maybe_from_dict(d: dict[str, Any]) -> str | None:
         for k in ("serial", "serialNo", "serialNO", "serial_number"):
@@ -229,8 +262,8 @@ async def _async_validate_input(
 ) -> dict[str, str]:
     """Validate user input.
 
-    Tries REST first (if a password is provided), then falls back to
-    legacy status.xml.
+    Tries REST first (if a password is provided), then falls back to the
+    XML status endpoint.
 
     Args:
         hass: Home Assistant instance.
@@ -331,8 +364,8 @@ async def _async_validate_input(
                                 break
 
                     if not logged_in:
-                        # Some devices/users may not permit REST login but still
-                        # allow legacy status.xml BasicAuth access.
+                        # REST login may be rejected while the XML status endpoint
+                        # still permits BasicAuth.
                         rest_invalid_auth = True
                         raise CannotConnect
 
@@ -459,14 +492,14 @@ async def _async_validate_input(
             _LOGGER.debug("REST not supported; falling back to status.xml")
             pass
         except InvalidAuth:
-            # Reserved for legacy XML auth failures below.
+            # Reserved for XML auth failures below.
             raise
         except (CannotConnect, json.JSONDecodeError) as err:
             # REST flaky? Try XML before failing.
             _LOGGER.debug("REST validation failed; trying status.xml: %s", err)
 
     try:
-        _LOGGER.debug("Trying legacy XML validation: %s", url)
+        _LOGGER.debug("Trying XML validation: %s", url)
         async with async_timeout.timeout(10):
             async with session.get(url, auth=auth) as resp:
                 _LOGGER.debug("XML status HTTP %s", resp.status)
@@ -482,7 +515,7 @@ async def _async_validate_input(
     except InvalidAuth:
         if rest_invalid_auth:
             _LOGGER.debug(
-                "REST login rejected and legacy XML auth failed host=%s user=%s",
+                "REST login rejected and XML auth failed host=%s user=%s",
                 host,
                 username,
             )
@@ -626,6 +659,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         Home Assistant will show a "Reconfigure" button for integrations that
         support it.
+
+        Args:
+            user_input: Optional dict of user-provided values.
+
+        Returns:
+            A Home Assistant config flow result.
         """
 
         # Home Assistant may call this step with `user_input=None`.
@@ -641,7 +680,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Prompt for updated host/credentials and reload the entry."""
+        """Prompt for updated host/credentials and reload the entry.
+
+        Args:
+            user_input: Optional dict of user-provided values.
+
+        Returns:
+            A Home Assistant config flow result.
+        """
 
         entry_id = getattr(self, "_apex_reconfigure_entry_id", None)
         if not entry_id:

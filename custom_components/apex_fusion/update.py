@@ -4,9 +4,9 @@ Home Assistant has a first-class Update platform for firmware/software update
 availability. The local Apex REST API exposes controller-level update metadata
 via `nstat.latestFirmware` and `nstat.updateFirmware`.
 
-Module-level firmware update availability is not consistently exposed across
-firmware versions. This platform will only create module update entities when
-there are strong signals that an update is relevant/available.
+Module-level update availability is not consistently exposed in controller
+payloads. This platform only creates module update entities when there are
+strong signals that an update is relevant/available.
 """
 
 from __future__ import annotations
@@ -18,64 +18,29 @@ from homeassistant.components.update import UpdateDeviceClass, UpdateEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify
 
-from .const import CONF_HOST, DOMAIN
+from .apex_fusion import (
+    ApexFusionContext,
+    mconf_modules_from_data,
+    raw_modules_from_data,
+    raw_nstat_from_data,
+)
+from .const import DOMAIN
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
     build_module_device_info,
     build_module_device_info_from_data,
     build_trident_device_info,
-    clean_hostname_display,
 )
 
 
 def _raw_nstat(data: dict[str, Any]) -> dict[str, Any]:
-    raw_any: Any = data.get("raw")
-    if not isinstance(raw_any, dict):
-        return {}
-
-    def _find_container(root: dict[str, Any], key: str) -> Any:
-        direct = root.get(key)
-        if direct is not None:
-            return direct
-        for container_key in ("data", "status", "istat", "systat", "result"):
-            container_any: Any = root.get(container_key)
-            if isinstance(container_any, dict) and key in container_any:
-                container = cast(dict[str, Any], container_any)
-                return container.get(key)
-        return None
-
-    nstat_any: Any = _find_container(cast(dict[str, Any], raw_any), "nstat")
-    return cast(dict[str, Any], nstat_any) if isinstance(nstat_any, dict) else {}
+    return raw_nstat_from_data(data)
 
 
 def _raw_modules(data: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_any: Any = data.get("raw")
-    if not isinstance(raw_any, dict):
-        return []
-
-    def _find_container(root: dict[str, Any], key: str) -> Any:
-        direct = root.get(key)
-        if direct is not None:
-            return direct
-        for container_key in ("data", "status", "istat", "systat", "result"):
-            container_any: Any = root.get(container_key)
-            if isinstance(container_any, dict) and key in container_any:
-                container = cast(dict[str, Any], container_any)
-                return container.get(key)
-        return None
-
-    modules_any: Any = _find_container(cast(dict[str, Any], raw_any), "modules")
-    if not isinstance(modules_any, list):
-        return []
-
-    out: list[dict[str, Any]] = []
-    for item_any in cast(list[Any], modules_any):
-        if isinstance(item_any, dict):
-            out.append(cast(dict[str, Any], item_any))
-    return out
+    return raw_modules_from_data(data)
 
 
 def _config_root(data: dict[str, Any]) -> dict[str, Any]:
@@ -89,14 +54,7 @@ def _config_nconf(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _config_mconf_modules(data: dict[str, Any]) -> list[dict[str, Any]]:
-    mconf_any: Any = _config_root(data).get("mconf")
-    if not isinstance(mconf_any, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for item_any in cast(list[Any], mconf_any):
-        if isinstance(item_any, dict):
-            out.append(cast(dict[str, Any], item_any))
-    return out
+    return mconf_modules_from_data(data)
 
 
 def _find_status_module(
@@ -172,18 +130,13 @@ class ApexUpdateEntity(UpdateEntity):
         self._entry = entry
         self._ref = ref
 
-        host = str(entry.data.get(CONF_HOST, ""))
-        meta_any: Any = (coordinator.data or {}).get("meta")
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
 
         self._attr_unique_id = ref.unique_id
         self._attr_name = ref.name
 
         # Suggest entity ids that remain unique across multiple tanks.
-        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
-        tank_slug = slugify(
-            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
-        )
+        tank_slug = ctx.tank_slug
 
         installed_version = ref.installed_fn(coordinator.data or {})
 
@@ -200,8 +153,8 @@ class ApexUpdateEntity(UpdateEntity):
                 else {}
             )
             self._attr_device_info = build_trident_device_info(
-                host=host,
-                meta=meta,
+                host=ctx.host,
+                meta=ctx.meta,
                 controller_device_identifier=coordinator.device_identifier,
                 trident_abaddr=ref.module_abaddr,
                 trident_hwtype=ref.module_hwtype,
@@ -218,13 +171,13 @@ class ApexUpdateEntity(UpdateEntity):
             # Prefer coordinator-derived module metadata (name/hwrev/serial).
             # Fall back to minimal device info if the module can't be resolved.
             module_device_info = build_module_device_info_from_data(
-                host=host,
+                host=ctx.host,
                 controller_device_identifier=coordinator.device_identifier,
                 data=coordinator.data or {},
                 module_abaddr=ref.module_abaddr,
             )
             self._attr_device_info = module_device_info or build_module_device_info(
-                host=host,
+                host=ctx.host,
                 controller_device_identifier=coordinator.device_identifier,
                 module_hwtype=hw,
                 module_abaddr=ref.module_abaddr,
@@ -234,8 +187,8 @@ class ApexUpdateEntity(UpdateEntity):
             # Controller update entity ids should also be tank-prefixed.
             self._attr_suggested_object_id = f"{tank_slug}_firmware"
             self._attr_device_info = build_device_info(
-                host=host,
-                meta=meta,
+                host=ctx.host,
+                meta=ctx.meta,
                 device_identifier=coordinator.device_identifier,
             )
 
@@ -290,6 +243,12 @@ def _controller_latest_effective(data: dict[str, Any]) -> str | None:
     Home Assistant derives update availability from whether latest_version differs
     from installed_version, so we suppress the reported latest when the controller
     explicitly says there is no update available.
+
+    Args:
+        data: Coordinator data dict.
+
+    Returns:
+        Effective latest version string, or None if unknown.
     """
     installed = _controller_installed(data)
     reported_latest = _controller_latest(data)
@@ -582,10 +541,8 @@ async def async_setup_entry(
 ) -> None:
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    host = str(entry.data.get(CONF_HOST, ""))
-    meta_any: Any = (coordinator.data or {}).get("meta")
-    meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
-    serial_for_ids = str(meta.get("serial") or host or "apex").replace(":", "_")
+    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    serial_for_ids = ctx.serial_for_ids
 
     controller_ref = _UpdateRef(
         unique_id=f"{serial_for_ids}_update_firmware".lower(),
