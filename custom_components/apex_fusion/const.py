@@ -37,3 +37,21 @@ PLATFORMS: Final[list[Platform]] = [
     Platform.NUMBER,
     Platform.UPDATE,
 ]
+
+# Friendly module names for Aquabus hardware types.
+#
+# These are used for Home Assistant device naming (not for identifiers), so the
+# UI shows descriptive names instead of short hwtype tokens.
+MODULE_HWTYPE_FRIENDLY_NAMES: Final[dict[str, str]] = {
+    "FMM": "Fluid Monitoring Module",
+    "PM2": "Salinity Probe Module",
+    "PM1": "pH/ORP Probe Module",
+    "MXM": "Mobius Wireless Control Module",
+    "VDM": "LED & Pump Control Module",
+    "PM3": "Dissolved Oxygen Module",
+    "AFS": "Automatic Feeding System",
+    "LSM": "Lunar Simulator Module",
+    # Common/related modules (not explicitly requested, but keeps naming tidy).
+    "TRI": "Trident",
+    "TNP": "Trident NP",
+}

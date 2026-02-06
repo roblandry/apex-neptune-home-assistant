@@ -35,9 +35,50 @@ from .const import (
     DEFAULT_TIMEOUT_SECONDS,
     DOMAIN,
     LOGGER_NAME,
+    MODULE_HWTYPE_FRIENDLY_NAMES,
 )
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+_INPUT_DID_MODULE_ABADDR = re.compile(r"^(?P<abaddr>\d+)_")
+
+
+def clean_hostname_display(hostname: str | None) -> str | None:
+    """Return a display-friendly hostname/tank name.
+
+    Controllers commonly report hostnames with underscores. HA UIs read better
+    with spaces, so normalize for display only.
+    """
+
+    t = (hostname or "").strip()
+    if not t:
+        return None
+    t = t.replace("_", " ")
+    t = " ".join(t.split())
+    return t or None
+
+
+def module_abaddr_from_input_did(did: str) -> int | None:
+    """Extract module Aquabus address from an input DID like `5_I1` or `4_0`.
+
+    Many Apex REST payloads encode the module address into the DID for module-
+    backed inputs (digital inputs, PM2 conductivity, Trident values, etc.).
+
+    This function is intentionally conservative and returns None when the DID
+    is not in the expected format.
+    """
+
+    t = (did or "").strip()
+    if not t:
+        return None
+    m = _INPUT_DID_MODULE_ABADDR.match(t)
+    if not m:
+        return None
+    try:
+        return int(m.group("abaddr"))
+    except ValueError:
+        return None
 
 
 # Conservative safety margins for Trident derived warnings.
@@ -46,6 +87,7 @@ _LOGGER = logging.getLogger(LOGGER_NAME)
 # container is completely full.
 TRIDENT_WASTE_FULL_MARGIN_ML = 20.0
 
+# TODO: Determine sane value based on real-world usage.
 # Reagents: warn conservatively when near-empty.
 TRIDENT_REAGENT_EMPTY_THRESHOLD_ML = 20.0
 
@@ -95,6 +137,8 @@ def build_device_info(
     """
     serial = str(meta.get("serial") or "").strip() or None
     model = str(meta.get("type") or meta.get("hardware") or "Apex").strip() or "Apex"
+    hostname = str(meta.get("hostname") or "").strip() or None
+    # Keep the controller device named as the controller (not the tank).
     name = "Apex"
 
     identifiers = {(DOMAIN, device_identifier)}
@@ -107,6 +151,7 @@ def build_device_info(
         hw_version=(str(meta.get("hardware") or "").strip() or None),
         sw_version=(str(meta.get("software") or "").strip() or None),
         configuration_url=f"http://{host}",
+        suggested_area=clean_hostname_display(hostname),
     )
 
 
@@ -127,21 +172,342 @@ def build_trident_device_info(
     separate device keeps the controller device page manageable.
     """
 
-    identifiers = {(DOMAIN, f"{controller_device_identifier}_trident_{trident_abaddr}")}
-    model = str(trident_hwtype).strip().upper() or None if trident_hwtype else None
-    name = f"Trident (Addr {trident_abaddr})"
+    # Historically, Trident used a separate identifier scheme. Keep the helper
+    # for call-site readability, but align identifiers and naming with generic
+    # Aquabus module devices.
+
+    hwtype = str(trident_hwtype).strip().upper() if trident_hwtype else "TRI"
+    return build_module_device_info(
+        host=host,
+        controller_device_identifier=controller_device_identifier,
+        module_hwtype=hwtype,
+        module_abaddr=trident_abaddr,
+        module_name=None,
+        module_hwrev=(str(trident_hwrev).strip() or None if trident_hwrev else None),
+        module_swrev=(str(trident_swrev).strip() or None if trident_swrev else None),
+        module_serial=(str(trident_serial).strip() or None if trident_serial else None),
+        tank_name=(str(meta.get("hostname") or "").strip() or None),
+    )
+
+
+def build_aquabus_child_device_info_from_data(
+    *,
+    host: str,
+    controller_meta: dict[str, Any],
+    controller_device_identifier: str,
+    data: dict[str, Any],
+    module_abaddr: int,
+    module_hwtype_hint: str | None = None,
+    module_name_hint: str | None = None,
+) -> DeviceInfo | None:
+    """Build DeviceInfo for an Aquabus module at an address.
+
+    Returns a Trident DeviceInfo for Trident-family modules, otherwise returns a
+    generic module DeviceInfo.
+
+    This uses only controller-provided metadata (config/status payloads).
+    """
+
+    meta = module_meta_from_data(data, module_abaddr=module_abaddr)
+    hwtype = str(meta.get("hwtype") or "").strip().upper()
+    if not hwtype and module_hwtype_hint:
+        hwtype = str(module_hwtype_hint).strip().upper()
+    if not hwtype:
+        return None
+
+    if hwtype in {"TRI", "TNP"}:
+        return build_trident_device_info(
+            host=host,
+            meta=controller_meta,
+            controller_device_identifier=controller_device_identifier,
+            trident_abaddr=module_abaddr,
+            trident_hwtype=hwtype,
+            trident_hwrev=meta.get("hwrev"),
+            trident_swrev=meta.get("swrev"),
+            trident_serial=meta.get("serial"),
+        )
+
+    module_name = meta.get("name") or (
+        str(module_name_hint).strip() if module_name_hint else None
+    )
+
+    return build_module_device_info(
+        host=host,
+        controller_device_identifier=controller_device_identifier,
+        module_hwtype=hwtype,
+        module_abaddr=module_abaddr,
+        module_name=module_name,
+        module_hwrev=meta.get("hwrev"),
+        module_swrev=meta.get("swrev"),
+        module_serial=meta.get("serial"),
+        tank_name=(str(controller_meta.get("hostname") or "").strip() or None),
+    )
+
+
+def build_module_device_info(
+    *,
+    host: str,
+    controller_device_identifier: str,
+    module_hwtype: str,
+    module_abaddr: int,
+    module_name: str | None = None,
+    module_hwrev: str | None = None,
+    module_swrev: str | None = None,
+    module_serial: str | None = None,
+    tank_name: str | None = None,
+) -> DeviceInfo:
+    """Build DeviceInfo for a generic Aquabus module.
+
+    This is used to group module-backed entities under their own device pages
+    (FMM/PM2/MXM/EB* etc.) while keeping the Apex controller device manageable.
+
+    Notes:
+    - No model/identifier fallbacks: callers should only pass real values.
+    - The module device is parented under the Apex controller device.
+    """
+
+    hwtype = str(module_hwtype or "").strip().upper()
+    identifiers = {
+        (DOMAIN, f"{controller_device_identifier}_module_{hwtype}_{module_abaddr}")
+    }
+
+    def _is_generic_module_name(name: str) -> bool:
+        t = (name or "").strip()
+        if not t:
+            return True
+        n = t.replace("-", "_").replace(" ", "_").strip().upper()
+        # Common default patterns from controller config.
+        if n == hwtype:
+            return True
+        if n == f"{hwtype}_{module_abaddr}":
+            return True
+        if n.startswith(f"{hwtype}_") and n.endswith(f"_{module_abaddr}"):
+            return True
+        return False
+
+    friendly_hw = MODULE_HWTYPE_FRIENDLY_NAMES.get(hwtype) or hwtype
+    # Prefer stable, controller-like naming for module devices.
+    # Keep the address number, but avoid the literal "Addr" text.
+    name = f"{friendly_hw} ({module_abaddr})"
+    if module_name and not _is_generic_module_name(module_name):
+        t = str(module_name).strip()
+        if t:
+            name = t
 
     return DeviceInfo(
         identifiers=identifiers,
         name=name,
         manufacturer="Neptune Systems",
-        model=model,
-        hw_version=(str(trident_hwrev).strip() or None if trident_hwrev else None),
-        sw_version=(str(trident_swrev).strip() or None if trident_swrev else None),
-        serial_number=(str(trident_serial).strip() or None if trident_serial else None),
+        model=hwtype or None,
+        hw_version=(str(module_hwrev).strip() or None if module_hwrev else None),
+        sw_version=(str(module_swrev).strip() or None if module_swrev else None),
+        serial_number=(str(module_serial).strip() or None if module_serial else None),
         configuration_url=f"http://{host}",
         via_device=(DOMAIN, controller_device_identifier),
     )
+
+
+def _modules_from_raw_status(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the controller's module list from a raw REST payload."""
+
+    modules_any: Any = raw.get("modules")
+    if isinstance(modules_any, list):
+        return [m for m in cast(list[Any], modules_any) if isinstance(m, dict)]
+
+    for container_key in ("data", "status", "istat", "systat", "result"):
+        container_any: Any = raw.get(container_key)
+        if not isinstance(container_any, dict):
+            continue
+        nested_any: Any = cast(dict[str, Any], container_any).get("modules")
+        if isinstance(nested_any, list):
+            return [m for m in cast(list[Any], nested_any) if isinstance(m, dict)]
+
+    return []
+
+
+def module_meta_from_data(
+    data: dict[str, Any], *, module_abaddr: int
+) -> dict[str, str | None]:
+    """Return module metadata (hwtype/name/hwrev/swrev/serial) when available."""
+
+    out: dict[str, str | None] = {
+        "hwtype": None,
+        "name": None,
+        "hwrev": None,
+        "swrev": None,
+        "serial": None,
+    }
+
+    # Config-derived metadata (stable names and hwtype mapping).
+    config_any: Any = data.get("config")
+    if isinstance(config_any, dict):
+        mconf_any: Any = cast(dict[str, Any], config_any).get("mconf")
+        if isinstance(mconf_any, list):
+            for item_any in cast(list[Any], mconf_any):
+                if not isinstance(item_any, dict):
+                    continue
+                item = cast(dict[str, Any], item_any)
+                if item.get("abaddr") != module_abaddr:
+                    continue
+                hwtype = (
+                    str(item.get("hwtype") or item.get("hwType") or "").strip().upper()
+                )
+                if hwtype:
+                    out["hwtype"] = out["hwtype"] or hwtype
+                name_any: Any = item.get("name")
+                if isinstance(name_any, str) and name_any.strip():
+                    out["name"] = out["name"] or name_any.strip()
+                break
+
+    # Status-derived metadata (versions/serial when the controller provides them).
+    raw_any: Any = data.get("raw")
+    raw = cast(dict[str, Any], raw_any) if isinstance(raw_any, dict) else {}
+    for module in _modules_from_raw_status(raw):
+        if module.get("abaddr") != module_abaddr:
+            continue
+
+        hwtype_any: Any = (
+            module.get("hwtype") or module.get("hwType") or module.get("type")
+        )
+        if isinstance(hwtype_any, str) and hwtype_any.strip():
+            out["hwtype"] = out["hwtype"] or hwtype_any.strip().upper()
+
+        hwrev_any: Any = (
+            module.get("hwrev")
+            or module.get("hwRev")
+            or module.get("hw_version")
+            or module.get("hwVersion")
+            or module.get("rev")
+        )
+        if isinstance(hwrev_any, (str, int, float)):
+            t = str(hwrev_any).strip()
+            out["hwrev"] = out["hwrev"] or (t or None)
+
+        swrev_any: Any = (
+            module.get("software")
+            or module.get("swrev")
+            or module.get("swRev")
+            or module.get("sw_version")
+            or module.get("swVersion")
+        )
+        if isinstance(swrev_any, (str, int, float)):
+            t = str(swrev_any).strip()
+            out["swrev"] = out["swrev"] or (t or None)
+
+        serial_any: Any = (
+            module.get("serial")
+            or module.get("serialNo")
+            or module.get("serialNO")
+            or module.get("serial_number")
+        )
+        if isinstance(serial_any, (str, int, float)):
+            t = str(serial_any).strip()
+            out["serial"] = out["serial"] or (t or None)
+
+        break
+
+    return out
+
+
+def build_module_device_info_from_data(
+    *,
+    host: str,
+    controller_device_identifier: str,
+    data: dict[str, Any],
+    module_abaddr: int,
+) -> DeviceInfo | None:
+    """Build module DeviceInfo from coordinator data when hwtype is known."""
+
+    meta = module_meta_from_data(data, module_abaddr=module_abaddr)
+    hwtype = str(meta.get("hwtype") or "").strip().upper()
+    if not hwtype:
+        return None
+    # Trident-family modules use a dedicated device builder.
+    if hwtype in {"TRI", "TNP"}:
+        return None
+
+    return build_module_device_info(
+        host=host,
+        controller_device_identifier=controller_device_identifier,
+        module_hwtype=hwtype,
+        module_abaddr=module_abaddr,
+        module_name=meta.get("name"),
+        module_hwrev=meta.get("hwrev"),
+        module_swrev=meta.get("swrev"),
+        module_serial=meta.get("serial"),
+        tank_name=(
+            str(
+                cast(dict[str, Any], data.get("meta", {})).get("hostname") or ""
+            ).strip()
+            if isinstance(data.get("meta"), dict)
+            else None
+        )
+        or None,
+    )
+
+
+def normalize_module_hwtype_from_outlet_type(outlet_type: str | None) -> str | None:
+    """Normalize an outlet type string into a module hwtype token.
+
+    Outlet types are controller-reported strings like:
+    - "EB832"
+    - "MXMPump|AI|Nero5" (device-specific, but the hosting module is "MXM")
+
+    This function is intentionally conservative and returns None when empty.
+    """
+
+    t = (outlet_type or "").strip()
+    if not t:
+        return None
+
+    # Many device-backed outlets encode extra detail after '|'.
+    token = t.split("|", 1)[0].strip()
+    if not token:
+        return None
+
+    up = token.upper()
+    # The MXM module hosts multiple device types (pumps/lights) under MXM* tokens.
+    if up.startswith("MXM"):
+        return "MXM"
+
+    return up
+
+
+def unambiguous_module_abaddr_from_config(
+    data: dict[str, Any], *, module_hwtype: str
+) -> int | None:
+    """Return module abaddr when config.mconf has exactly one matching hwtype.
+
+    This is used for safely parenting entities under a module device without
+    guessing when multiple modules of the same hwtype exist.
+    """
+
+    hw = str(module_hwtype or "").strip().upper()
+    if not hw:
+        return None
+
+    config_any: Any = data.get("config")
+    if not isinstance(config_any, dict):
+        return None
+    mconf_any: Any = cast(dict[str, Any], config_any).get("mconf")
+    if not isinstance(mconf_any, list):
+        return None
+
+    matches: set[int] = set()
+    for item_any in cast(list[Any], mconf_any):
+        if not isinstance(item_any, dict):
+            continue
+        item = cast(dict[str, Any], item_any)
+        item_hw = str(item.get("hwtype") or item.get("hwType") or "").strip().upper()
+        if item_hw != hw:
+            continue
+        abaddr_any: Any = item.get("abaddr")
+        if isinstance(abaddr_any, int):
+            matches.add(abaddr_any)
+
+    if len(matches) != 1:
+        return None
+    return next(iter(matches))
 
 
 class _RestNotSupported(Exception):
@@ -511,12 +877,39 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
                 did = _coerce_id(item, "name")
             if not did:
                 continue
+
+            # Some firmwares include module identity fields for inputs.
+            module_abaddr: int | None = None
+            module_abaddr_any: Any = (
+                item.get("module_abaddr") or item.get("abaddr") or item.get("abAddr")
+            )
+            if module_abaddr_any is None and isinstance(item.get("module"), dict):
+                module = cast(dict[str, Any], item.get("module"))
+                module_abaddr_any = module.get("abaddr") or module.get("abAddr")
+            if isinstance(module_abaddr_any, int):
+                module_abaddr = module_abaddr_any
+
+            if module_abaddr is None:
+                module_abaddr = module_abaddr_from_input_did(did)
+
+            module_hwtype: str | None = None
+            module_hwtype_any: Any = (
+                item.get("module_hwtype") or item.get("hwtype") or item.get("hwType")
+            )
+            if module_hwtype_any is None and isinstance(item.get("module"), dict):
+                module = cast(dict[str, Any], item.get("module"))
+                module_hwtype_any = module.get("hwtype") or module.get("hwType")
+            if isinstance(module_hwtype_any, str) and module_hwtype_any.strip():
+                module_hwtype = module_hwtype_any.strip().upper()
+
             value: Any = item.get("value")
             probes[did] = {
                 "name": (str(item.get("name") or did)).strip(),
                 "type": (str(item.get("type") or "")).strip() or None,
                 "value_raw": value,
                 "value": value,
+                "module_abaddr": module_abaddr,
+                "module_hwtype": module_hwtype,
             }
 
     outlets: list[dict[str, Any]] = []
@@ -545,6 +938,47 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
             gid_any: Any = item.get("gid")
             gid = gid_any if isinstance(gid_any, str) else None
 
+            # Some firmwares include module identity fields for outputs.
+            out_module_abaddr: int | None = None
+            out_abaddr_any: Any = (
+                item.get("module_abaddr")
+                or item.get("abaddr")
+                or item.get("abAddr")
+                or item.get("moduleAbAddr")
+            )
+            if out_abaddr_any is None and isinstance(item.get("module"), dict):
+                module = cast(dict[str, Any], item.get("module"))
+                out_abaddr_any = module.get("abaddr") or module.get("abAddr")
+            if isinstance(out_abaddr_any, int):
+                out_module_abaddr = out_abaddr_any
+
+            if out_module_abaddr is None:
+                out_module_abaddr = module_abaddr_from_input_did(did)
+
+            out_module_hwtype: str | None = None
+            out_hwtype_any: Any = (
+                item.get("module_hwtype")
+                or item.get("hwtype")
+                or item.get("hwType")
+                or item.get("moduleHwType")
+            )
+            if out_hwtype_any is None and isinstance(item.get("module"), dict):
+                module = cast(dict[str, Any], item.get("module"))
+                out_hwtype_any = module.get("hwtype") or module.get("hwType")
+            if isinstance(out_hwtype_any, str) and out_hwtype_any.strip():
+                out_module_hwtype = out_hwtype_any.strip().upper()
+
+            intensity_any: Any = item.get("intensity")
+            intensity: int | None = None
+            if isinstance(intensity_any, int) and not isinstance(intensity_any, bool):
+                intensity = intensity_any
+            elif isinstance(intensity_any, float) and intensity_any.is_integer():
+                intensity = int(intensity_any)
+            elif isinstance(intensity_any, str) and intensity_any.strip().isdigit():
+                intensity = int(intensity_any.strip())
+
+            module_abaddr = out_module_abaddr
+
             outlets.append(
                 {
                     "name": (str(item.get("name") or did)).strip(),
@@ -557,6 +991,9 @@ def parse_status_rest(status_obj: dict[str, Any]) -> dict[str, Any]:
                     "type": (output_type or "").strip() or None,
                     "gid": (gid or "").strip() or None,
                     "status": status_any if isinstance(status_any, list) else None,
+                    "intensity": intensity,
+                    "module_abaddr": module_abaddr,
+                    "module_hwtype": out_module_hwtype,
                 }
             )
 
@@ -1013,12 +1450,32 @@ def parse_status_cgi_json(status_obj: dict[str, Any]) -> dict[str, Any]:
             did = did_any if isinstance(did_any, str) else None
             if not did:
                 continue
+
+            module_abaddr: int | None = None
+            module_abaddr_any: Any = (
+                item.get("module_abaddr") or item.get("abaddr") or item.get("abAddr")
+            )
+            if isinstance(module_abaddr_any, int):
+                module_abaddr = module_abaddr_any
+
+            if module_abaddr is None:
+                module_abaddr = module_abaddr_from_input_did(did)
+
+            module_hwtype: str | None = None
+            module_hwtype_any: Any = (
+                item.get("module_hwtype") or item.get("hwtype") or item.get("hwType")
+            )
+            if isinstance(module_hwtype_any, str) and module_hwtype_any.strip():
+                module_hwtype = module_hwtype_any.strip().upper()
+
             value: Any = item.get("value")
             probes[did] = {
                 "name": (str(item.get("name") or did)).strip(),
                 "type": (str(item.get("type") or "")).strip() or None,
                 "value_raw": value,
                 "value": value,
+                "module_abaddr": module_abaddr,
+                "module_hwtype": module_hwtype,
             }
 
     outlets: list[dict[str, Any]] = []
@@ -1044,6 +1501,22 @@ def parse_status_cgi_json(status_obj: dict[str, Any]) -> dict[str, Any]:
             gid_any: Any = item.get("gid")
             gid = gid_any if isinstance(gid_any, str) else None
 
+            module_abaddr: int | None = None
+            module_abaddr_any: Any = (
+                item.get("module_abaddr") or item.get("abaddr") or item.get("abAddr")
+            )
+            if isinstance(module_abaddr_any, int):
+                module_abaddr = module_abaddr_any
+            if module_abaddr is None:
+                module_abaddr = module_abaddr_from_input_did(did)
+
+            module_hwtype: str | None = None
+            module_hwtype_any: Any = (
+                item.get("module_hwtype") or item.get("hwtype") or item.get("hwType")
+            )
+            if isinstance(module_hwtype_any, str) and module_hwtype_any.strip():
+                module_hwtype = module_hwtype_any.strip().upper()
+
             outlets.append(
                 {
                     "name": (str(item.get("name") or did)).strip(),
@@ -1053,6 +1526,8 @@ def parse_status_cgi_json(status_obj: dict[str, Any]) -> dict[str, Any]:
                     "type": (output_type or "").strip() or None,
                     "gid": (gid or "").strip() or None,
                     "status": status_any if isinstance(status_any, list) else None,
+                    "module_abaddr": module_abaddr,
+                    "module_hwtype": module_hwtype,
                 }
             )
 

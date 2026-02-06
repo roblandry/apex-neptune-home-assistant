@@ -18,11 +18,15 @@ def test_binary_sensor_int_coercion_helpers_cover_branches():
     assert binary_sensor._as_int_0_1(0) == 0
     assert binary_sensor._as_int_0_1(1) == 1
     assert binary_sensor._as_int_0_1(2) is None
+    assert binary_sensor._as_int_0_1(100) == 1
+    assert binary_sensor._as_int_0_1(200) == 0
     assert binary_sensor._as_int_0_1(0.0) == 0
     assert binary_sensor._as_int_0_1(1.0) == 1
     assert binary_sensor._as_int_0_1(0.5) is None
     assert binary_sensor._as_int_0_1("0") == 0
     assert binary_sensor._as_int_0_1(" 1 ") == 1
+    assert binary_sensor._as_int_0_1("100") == 1
+    assert binary_sensor._as_int_0_1("200") == 0
     assert binary_sensor._as_int_0_1("nope") is None
     assert binary_sensor._as_int_0_1(object()) is None
 
@@ -68,6 +72,7 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
         data={
             "meta": {"serial": "ABC"},
             "network": {"dhcp": True, "wifi_enable": 1},
+            "config": {"mconf": [{"abaddr": 3, "hwtype": "FMM", "name": "My FMM"}]},
             "trident": {
                 "present": True,
                 "abaddr": 5,
@@ -75,7 +80,12 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
                 "waste_full": True,
             },
             "probes": {
-                "DI1": {"name": "Door_1", "type": "digital", "value": 0},
+                "DI1": {
+                    "name": "Door_1",
+                    "type": "digital",
+                    "value": 0,
+                    "module_abaddr": 3,
+                },
             },
         },
         last_update_success=True,
@@ -105,6 +115,9 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
         None,
     )
     assert digital is not None
+    assert digital.device_info is not None
+    assert digital.device_info.get("name") == "My FMM"
+    assert digital.device_info.get("via_device") == (DOMAIN, "ABC")
 
     # Trident binary sensors should be grouped under the Trident device when abaddr is known.
     trident_testing = next(
@@ -118,7 +131,7 @@ async def test_binary_sensor_setup_and_updates(hass, enable_custom_integrations)
     )
     assert trident_testing is not None
     assert trident_testing.device_info is not None
-    assert trident_testing.device_info.get("name") == "Trident (Addr 5)"
+    assert trident_testing.device_info.get("name") == "Trident (5)"
     assert trident_testing.device_info.get("via_device") == (DOMAIN, "ABC")
 
     for ent in added:
@@ -189,6 +202,8 @@ async def test_binary_sensor_digital_probe_skips_and_fallbacks(
                     "type": "digital",
                     "value": None,
                     "value_raw": "0",
+                    "module_abaddr": 7,
+                    "module_hwtype": "PM2",
                 },
             },
         },
@@ -213,6 +228,21 @@ async def test_binary_sensor_digital_probe_skips_and_fallbacks(
     for ent in added:
         ent.async_write_ha_state = lambda *args, **kwargs: None
         await ent.async_added_to_hass()
+
+    raw = next(
+        (
+            e
+            for e in added
+            if isinstance(e, binary_sensor.ApexDigitalProbeBinarySensor)
+            and getattr(getattr(e, "_ref", None), "key", None) == "DI_RAW"
+        ),
+        None,
+    )
+    assert raw is not None
+    assert raw.device_info is not None
+    assert raw.device_info.get("name") == "Salinity Probe Module (7)"
+    assert raw.device_info.get("via_device") == (DOMAIN, "ABC")
+    assert raw.device_info.get("identifiers") == {(DOMAIN, "ABC_module_PM2_7")}
 
     # Cover _find_probe branch where probe entry is not a dict.
     coordinator.data["probes"]["1"] = "nope"

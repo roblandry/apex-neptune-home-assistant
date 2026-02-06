@@ -29,6 +29,13 @@ class _CoordinatorStub:
         return _unsub
 
 
+def _device_model(entity: Any) -> str:
+    device_info_any = getattr(entity, "device_info", None)
+    if not isinstance(device_info_any, dict):
+        return ""
+    return str(device_info_any.get("model") or "")
+
+
 async def test_update_setup_creates_controller_update_entity(
     hass, enable_custom_integrations
 ):
@@ -71,7 +78,7 @@ async def test_update_setup_creates_controller_update_entity(
 
     assert len(added) == 1
     ent = added[0]
-    assert ent.name == "AC6J Firmware"
+    assert ent.name == "Firmware"
     assert ent.installed_version == "5.12J_CA25"
     assert ent.latest_version == "5.12_CA25"
     assert ent.state == "on"
@@ -145,23 +152,33 @@ async def test_update_setup_creates_module_update_entity_when_outdated(
     # Controller firmware update + module updates.
     assert len(added) == 4
 
-    names = sorted(e.name for e in added)
-    assert names == ["AC6J Firmware", "FMM Firmware", "PM2 Firmware", "TRI Firmware"]
+    models = sorted(_device_model(e) for e in added)
+    assert models == ["AC6J", "FMM", "PM2", "TRI"]
 
-    fmm = next(e for e in added if e.name == "FMM Firmware")
+    assert {e.name for e in added} == {"Firmware"}
+
+    fmm = next(e for e in added if _device_model(e) == "FMM")
     assert fmm.installed_version == "24"
     assert fmm.latest_version == "25"
     assert fmm.state == "on"
+    assert fmm.device_info is not None
+    assert fmm.device_info.get("name") == "Fluid Monitoring Module (1)"
+    assert fmm.device_info.get("via_device") == (DOMAIN, "TEST")
+    assert fmm.device_info.get("sw_version") == "24"
 
-    pm2 = next(e for e in added if e.name == "PM2 Firmware")
+    pm2 = next(e for e in added if _device_model(e) == "PM2")
     assert pm2.installed_version == "3"
     assert pm2.latest_version == "3"
     assert pm2.state == "off"
+    assert pm2.device_info is not None
+    assert pm2.device_info.get("name") == "Salinity Probe Module (2)"
+    assert pm2.device_info.get("via_device") == (DOMAIN, "TEST")
+    assert pm2.device_info.get("sw_version") == "3"
 
-    tri = next(e for e in added if e.name == "TRI Firmware")
+    tri = next(e for e in added if _device_model(e) == "TRI")
     assert tri.installed_version == "1"
     assert tri.device_info is not None
-    assert tri.device_info.get("name") == "Trident (Addr 5)"
+    assert tri.device_info.get("name") == "Trident (5)"
     assert tri.device_info.get("via_device") == (DOMAIN, "TEST")
 
     fmm.async_write_ha_state = lambda *args, **kwargs: None
@@ -170,6 +187,57 @@ async def test_update_setup_creates_module_update_entity_when_outdated(
     # Cover the module entity de-duplication branch in async_setup_entry.
     for cb in list(listeners):
         cb()
+
+
+async def test_update_module_device_name_uses_mconf_name_when_present(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC", "hostname": "apex", "type": "AC6J"},
+            "raw": {
+                "nstat": {"updateFirmware": False},
+                "modules": [
+                    {
+                        "abaddr": 1,
+                        "hwtype": "FMM",
+                        "present": True,
+                        "swrev": 24,
+                        "swstat": "OK",
+                    },
+                ],
+            },
+            "config": {
+                "mconf": [
+                    {"abaddr": 1, "hwtype": "FMM", "name": "My FMM"},
+                ]
+            },
+        }
+    )
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    added: list[Any] = []
+
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import update
+
+    await update.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    fmm = next(e for e in added if _device_model(e) == "FMM")
+    assert fmm.device_info is not None
+    assert fmm.device_info.get("name") == "My FMM"
+    assert fmm.device_info.get("via_device") == (DOMAIN, "TEST")
 
 
 async def test_update_controller_suppresses_latest_when_no_update(
@@ -207,7 +275,7 @@ async def test_update_controller_suppresses_latest_when_no_update(
 
     await update.async_setup_entry(hass, cast(Any, entry), _add_entities)
 
-    ent = next(e for e in added if e.name == "AC6J Firmware")
+    ent = next(e for e in added if _device_model(e) == "AC6J")
     # When the controller says there is no update, state should be off.
     assert ent.installed_version == "5.12J_CA25"
     assert ent.latest_version == "5.12J_CA25"
@@ -254,7 +322,7 @@ async def test_update_controller_prefers_nconf_update_flag_over_nstat(
 
     await update.async_setup_entry(hass, cast(Any, entry), _add_entities)
 
-    ent = next(e for e in added if e.name == "AC6J Firmware")
+    ent = next(e for e in added if _device_model(e) == "AC6J")
     assert ent.latest_version == "5.12J_CA25"
     assert ent.state == "off"
 
@@ -300,16 +368,18 @@ async def test_update_modules_use_mconf_update_flags_when_present(
     await update.async_setup_entry(hass, cast(Any, entry), _add_entities)
 
     # Controller firmware + both module entities (driven by mconf)
-    names = sorted(e.name for e in added)
-    assert names == ["AC6J Firmware", "FMM Firmware", "PM2 Firmware"]
+    assert {e.name for e in added} == {"Firmware"}
 
-    fmm = next(e for e in added if e.name == "FMM Firmware")
+    models = sorted(_device_model(e) for e in added)
+    assert models == ["AC6J", "FMM", "PM2"]
+
+    fmm = next(e for e in added if _device_model(e) == "FMM")
     assert fmm.installed_version == "24"
     assert fmm.latest_version == "Update available"
     assert fmm.state == "on"
     assert fmm.release_summary == "updateStat=1"
 
-    pm2 = next(e for e in added if e.name == "PM2 Firmware")
+    pm2 = next(e for e in added if _device_model(e) == "PM2")
     assert pm2.installed_version == "3"
     assert pm2.latest_version == "3"
     assert pm2.state == "off"
@@ -369,9 +439,10 @@ def test_update_helpers_cover_branches():
         },
         "ABC",
     )
-    assert {r.name for r in refs} == {"PM2 Firmware", "WXM Firmware", "VDM Firmware"}
+    assert {r.name for r in refs} == {"Firmware"}
+    assert {cast(str, r.module_hwtype) for r in refs} == {"PM2", "WXM", "VDM"}
 
-    vdm_ref = next(r for r in refs if r.name == "VDM Firmware")
+    vdm_ref = next(r for r in refs if r.module_hwtype == "VDM")
     # Happy-path module lookup
     assert (
         vdm_ref.installed_fn(
@@ -431,7 +502,7 @@ def test_update_helpers_cover_branches():
         == "OK"
     )
 
-    pm2_ref = next(r for r in refs if r.name == "PM2 Firmware")
+    pm2_ref = next(r for r in refs if r.module_hwtype == "PM2")
     assert (
         pm2_ref.latest_fn(
             {
@@ -482,7 +553,7 @@ def test_update_helpers_cover_branches():
         is None
     )
 
-    wxm_ref = next(r for r in refs if r.name == "WXM Firmware")
+    wxm_ref = next(r for r in refs if r.module_hwtype == "WXM")
     assert (
         wxm_ref.latest_fn(
             {
@@ -561,9 +632,10 @@ def test_update_helpers_cover_branches():
         "ABC",
     )
     # VDM skipped because present=False; FMM+PM2 included
-    assert sorted(r.name for r in refs_cfg) == ["FMM Firmware", "PM2 Firmware"]
+    assert {r.name for r in refs_cfg} == {"Firmware"}
+    assert sorted(cast(str, r.module_hwtype) for r in refs_cfg) == ["FMM", "PM2"]
 
-    fmm_ref = next(r for r in refs_cfg if r.name == "FMM Firmware")
+    fmm_ref = next(r for r in refs_cfg if r.module_hwtype == "FMM")
     assert (
         fmm_ref.installed_fn(
             {"raw": {"modules": [{"hwtype": "FMM", "abaddr": 1, "swrev": 24}]}}
@@ -601,7 +673,7 @@ def test_update_helpers_cover_branches():
         == "updateStat=2"
     )
 
-    pm2_ref = next(r for r in refs_cfg if r.name == "PM2 Firmware")
+    pm2_ref = next(r for r in refs_cfg if r.module_hwtype == "PM2")
     # config says no update -> suppress latest
     assert (
         pm2_ref.latest_fn(
@@ -723,7 +795,8 @@ def test_update_helpers_cover_branches():
     )
     assert len(refs_did) == 1
     vdm_ref = refs_did[0]
-    assert vdm_ref.name == "VDM Firmware"
+    assert vdm_ref.name == "Firmware"
+    assert vdm_ref.module_hwtype == "VDM"
     assert (
         vdm_ref.installed_fn(
             {

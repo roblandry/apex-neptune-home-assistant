@@ -26,6 +26,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import slugify
 
 from .const import (
     CONF_HOST,
@@ -33,7 +34,15 @@ from .const import (
     DOMAIN,
     LOGGER_NAME,
 )
-from .coordinator import ApexNeptuneDataUpdateCoordinator, build_device_info
+from .coordinator import (
+    ApexNeptuneDataUpdateCoordinator,
+    build_aquabus_child_device_info_from_data,
+    build_device_info,
+    clean_hostname_display,
+    module_abaddr_from_input_did,
+    normalize_module_hwtype_from_outlet_type,
+    unambiguous_module_abaddr_from_config,
+)
 from .sensor import friendly_outlet_name
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
@@ -184,7 +193,55 @@ class ApexOutletModeSelect(SelectEntity):
         self._attr_unique_id = f"{serial}_outlet_mode_{ref.did}".lower()
         self._attr_name = ref.name
 
-        self._attr_device_info = build_device_info(
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp
+            or str(meta.get("hostname") or "").strip()
+            or str(entry.title or "tank").strip()
+        )
+        did_slug = str(ref.did or "").strip().lower() or "outlet"
+        self._attr_suggested_object_id = f"{tank_slug}_outlet_{did_slug}_mode"
+
+        # Prefer grouping under the backing Aquabus module device when the
+        # mapping is unambiguous (e.g., a single EB832 on the bus).
+        outlet = self._find_outlet()
+        outlet_type = cast(str | None, outlet.get("type"))
+        module_hwtype_hint = (
+            str(outlet.get("module_hwtype")).strip()
+            if isinstance(outlet.get("module_hwtype"), str)
+            else None
+        )
+        if not module_hwtype_hint:
+            module_hwtype_hint = normalize_module_hwtype_from_outlet_type(outlet_type)
+
+        module_abaddr_any: Any = outlet.get("module_abaddr")
+        module_abaddr = (
+            module_abaddr_any if isinstance(module_abaddr_any, int) else None
+        )
+        if module_abaddr is None:
+            module_abaddr = module_abaddr_from_input_did(ref.did)
+
+        # Last resort: config-based mapping when the controller doesn't
+        # provide a per-outlet module address.
+        if module_abaddr is None and module_hwtype_hint:
+            module_abaddr = unambiguous_module_abaddr_from_config(
+                coordinator.data or {}, module_hwtype=module_hwtype_hint
+            )
+
+        module_device_info = (
+            build_aquabus_child_device_info_from_data(
+                host=host,
+                controller_meta=meta,
+                controller_device_identifier=coordinator.device_identifier,
+                data=coordinator.data or {},
+                module_abaddr=module_abaddr,
+                module_hwtype_hint=module_hwtype_hint,
+            )
+            if isinstance(module_abaddr, int)
+            else None
+        )
+
+        self._attr_device_info = module_device_info or build_device_info(
             host=host,
             meta=meta,
             device_identifier=coordinator.device_identifier,
@@ -195,10 +252,7 @@ class ApexOutletModeSelect(SelectEntity):
             getattr(self._coordinator, "last_update_success", True)
         )
         self._attr_current_option = None
-        outlet = self._find_outlet()
-        self._attr_icon = _icon_for_outlet_select(
-            ref.name, cast(str | None, outlet.get("type"))
-        )
+        self._attr_icon = _icon_for_outlet_select(ref.name, outlet_type)
         self._refresh_from_coordinator()
 
     def _find_outlet(self) -> dict[str, Any]:

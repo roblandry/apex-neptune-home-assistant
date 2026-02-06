@@ -119,6 +119,242 @@ def test_sanitize_config_helpers_cover_branches():
     ) == {"latestFirmware": "5.12_CA25", "updateFirmware": False}
 
 
+def test_generic_module_device_helpers_cover_branches():
+    info = coordinator.build_module_device_info(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        module_hwtype="FMM",
+        module_abaddr=1,
+    )
+    assert info.get("identifiers") == {(DOMAIN, "TEST_module_FMM_1")}
+    assert info.get("name") == "Fluid Monitoring Module (1)"
+    assert info.get("model") == "FMM"
+    assert info.get("via_device") == (DOMAIN, "TEST")
+
+    info_named = coordinator.build_module_device_info(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        module_hwtype="PM2",
+        module_abaddr=2,
+        module_name="  My PM2  ",
+        module_hwrev="A",
+        module_swrev="3",
+        module_serial="123",
+    )
+    assert info_named.get("name") == "My PM2"
+    assert info_named.get("hw_version") == "A"
+    assert info_named.get("sw_version") == "3"
+    assert info_named.get("serial_number") == "123"
+
+    # module_name present but blank after stripping -> treated as generic
+    info_blank = coordinator.build_module_device_info(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        module_hwtype="FMM",
+        module_abaddr=3,
+        module_name="   ",
+    )
+    assert info_blank.get("name") == "Fluid Monitoring Module (3)"
+
+    # Generic controller patterns like FMM_x_y should not override friendly naming.
+    info_generic_pattern = coordinator.build_module_device_info(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        module_hwtype="FMM",
+        module_abaddr=3,
+        module_name="FMM_EXTRA_3",
+    )
+    assert info_generic_pattern.get("name") == "Fluid Monitoring Module (3)"
+
+    assert coordinator._modules_from_raw_status({"modules": "nope"}) == []
+    assert coordinator._modules_from_raw_status({"modules": [{"abaddr": 1}, "x"]}) == [
+        {"abaddr": 1}
+    ]
+    assert coordinator._modules_from_raw_status(
+        {"data": {"modules": [{"abaddr": 9, "hwtype": "FMM"}]}}
+    ) == [{"abaddr": 9, "hwtype": "FMM"}]
+
+    data = {
+        "config": {
+            "mconf": [
+                "nope",
+                {"abaddr": 99, "hwtype": "FMM", "name": "Wrong"},
+                {"abaddr": 1, "hwtype": "FMM", "name": "My FMM"},
+            ]
+        },
+        "raw": {
+            "data": {
+                "modules": [
+                    {"abaddr": 99, "hwtype": "FMM", "swrev": 1},
+                    {
+                        "abaddr": 1,
+                        "hwtype": "FMM",
+                        "hwrev": "B",
+                        "swrev": 24,
+                        "serial": "S1",
+                    },
+                ]
+            }
+        },
+    }
+    meta = coordinator.module_meta_from_data(data, module_abaddr=1)
+    assert meta["hwtype"] == "FMM"
+    assert meta["name"] == "My FMM"
+    assert meta["hwrev"] == "B"
+    assert meta["swrev"] == "24"
+    assert meta["serial"] == "S1"
+
+    # Trident-family modules are intentionally excluded from the generic builder.
+    tri = coordinator.build_module_device_info_from_data(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        data={"config": {"mconf": [{"abaddr": 5, "hwtype": "TRI"}]}},
+        module_abaddr=5,
+    )
+    assert tri is None
+
+    fmm = coordinator.build_module_device_info_from_data(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        data=data,
+        module_abaddr=1,
+    )
+    assert fmm is not None
+    assert fmm.get("name") == "My FMM"
+    assert fmm.get("via_device") == (DOMAIN, "TEST")
+
+    # Cover alternate status-module key variants and nested containers.
+    meta2 = coordinator.module_meta_from_data(
+        {
+            "raw": {
+                "status": {
+                    "modules": [
+                        {
+                            "abaddr": 7,
+                            "type": "PM2",
+                            "rev": 1,
+                            "software": "4",
+                            "serialNO": "SER7",
+                        }
+                    ]
+                }
+            }
+        },
+        module_abaddr=7,
+    )
+    assert meta2["hwtype"] == "PM2"
+    assert meta2["hwrev"] == "1"
+    assert meta2["swrev"] == "4"
+    assert meta2["serial"] == "SER7"
+
+    # Covers: unknown module hwtype returns None.
+    unknown = coordinator.build_module_device_info_from_data(
+        host="1.2.3.4",
+        controller_device_identifier="TEST",
+        data={"raw": {"modules": [{"abaddr": 8}]}},
+        module_abaddr=8,
+    )
+    assert unknown is None
+
+    assert coordinator.normalize_module_hwtype_from_outlet_type(None) is None
+    assert coordinator.normalize_module_hwtype_from_outlet_type("  ") is None
+    assert coordinator.normalize_module_hwtype_from_outlet_type("|AI|Nero5") is None
+    assert coordinator.normalize_module_hwtype_from_outlet_type("EB832") == "EB832"
+    assert (
+        coordinator.normalize_module_hwtype_from_outlet_type("MXMPump|AI|Nero5")
+        == "MXM"
+    )
+
+    assert (
+        coordinator.unambiguous_module_abaddr_from_config({}, module_hwtype=" ") is None
+    )
+    assert (
+        coordinator.unambiguous_module_abaddr_from_config({}, module_hwtype="EB832")
+        is None
+    )
+    assert (
+        coordinator.unambiguous_module_abaddr_from_config(
+            {"config": {"mconf": "nope"}},
+            module_hwtype="EB832",
+        )
+        is None
+    )
+
+
+def test_module_abaddr_from_input_did_cover_branches():
+    assert coordinator.module_abaddr_from_input_did("") is None
+    assert coordinator.module_abaddr_from_input_did("nope") is None
+    assert coordinator.module_abaddr_from_input_did("5") is None
+    assert coordinator.module_abaddr_from_input_did("5_I1") == 5
+
+    # Cover ValueError branch: Python limits max digits for int conversion.
+    did = ("9" * 5000) + "_I1"
+    assert coordinator.module_abaddr_from_input_did(did) is None
+
+
+def test_build_aquabus_child_device_info_from_data_cover_branches():
+    # Covers: missing hwtype and no hint returns None.
+    assert (
+        coordinator.build_aquabus_child_device_info_from_data(
+            host="1.2.3.4",
+            controller_meta={"serial": "A1"},
+            controller_device_identifier="TEST",
+            data={},
+            module_abaddr=1,
+        )
+        is None
+    )
+
+    # Covers: Trident-family hwtype returns a Trident device.
+    tri = coordinator.build_aquabus_child_device_info_from_data(
+        host="1.2.3.4",
+        controller_meta={"serial": "A1"},
+        controller_device_identifier="TEST",
+        data={},
+        module_abaddr=4,
+        module_hwtype_hint="TRI",
+    )
+    assert tri is not None
+    assert tri.get("name") == "Trident (4)"
+    assert tri.get("identifiers") == {(DOMAIN, "TEST_module_TRI_4")}
+    assert tri.get("via_device") == (DOMAIN, "TEST")
+
+    # Covers: module_name_hint is used when config/status doesn't provide name.
+    fmm = coordinator.build_aquabus_child_device_info_from_data(
+        host="1.2.3.4",
+        controller_meta={"serial": "A1"},
+        controller_device_identifier="TEST",
+        data={},
+        module_abaddr=3,
+        module_hwtype_hint="FMM",
+        module_name_hint="My FMM",
+    )
+    assert fmm is not None
+    assert fmm.get("name") == "My FMM"
+    assert (
+        coordinator.unambiguous_module_abaddr_from_config(
+            {"config": {"mconf": ["nope", {"hwType": "EB832", "abaddr": 3}]}},
+            module_hwtype="EB832",
+        )
+        == 3
+    )
+    # Multiple matching modules -> ambiguous -> None.
+    assert (
+        coordinator.unambiguous_module_abaddr_from_config(
+            {
+                "config": {
+                    "mconf": [
+                        {"hwtype": "EB832", "abaddr": 1},
+                        {"hwtype": "EB832", "abaddr": 2},
+                    ]
+                }
+            },
+            module_hwtype="EB832",
+        )
+        is None
+    )
+
+
 def test_to_number_and_url_builders():
     assert coordinator._to_number(None) is None
     assert coordinator._to_number("") is None
@@ -245,7 +481,27 @@ def test_parse_status_xml_and_rest_and_cgi_json():
         "system": {"software": "1", "hardware": "Apex", "serial": "ABC", "type": "A3"},
         "feed": {"name": 2, "active": 1},
         "inputs": [
-            {"did": "T1", "name": "Tmp", "type": "Tmp", "value": "25"},
+            {
+                "did": "T1",
+                "name": "Tmp",
+                "type": "Tmp",
+                "value": "25",
+                "abaddr": 3,
+                "hwtype": "FMM",
+            },
+            {
+                "did": "T2",
+                "name": "Tmp2",
+                "type": "Tmp",
+                "value": "26",
+                "module": {"abAddr": 4, "hwType": "PM2"},
+            },
+            {
+                "did": "5_I1",
+                "name": "Swx5_1",
+                "type": "digital",
+                "value": 0,
+            },
             "nope",
             {"did": "", "name": ""},
         ],
@@ -279,6 +535,11 @@ def test_parse_status_xml_and_rest_and_cgi_json():
     assert rest_parsed["meta"]["source"] == "rest"
     assert rest_parsed["network"]["ipaddr"] == "1.2.3.4"
     assert "T1" in rest_parsed["probes"]
+    assert rest_parsed["probes"]["T1"]["module_abaddr"] == 3
+    assert rest_parsed["probes"]["T1"]["module_hwtype"] == "FMM"
+    assert rest_parsed["probes"]["T2"]["module_abaddr"] == 4
+    assert rest_parsed["probes"]["T2"]["module_hwtype"] == "PM2"
+    assert rest_parsed["probes"]["5_I1"]["module_abaddr"] == 5
     assert rest_parsed["outlets"][0]["device_id"] == "O1"
     assert rest_parsed["trident"]["status"] == "testing Ca/Mg"
     assert rest_parsed["trident"]["is_testing"] is True
@@ -333,6 +594,14 @@ def test_parse_status_xml_and_rest_and_cgi_json():
             "feed": {"name": 3, "active": 1},
             "inputs": [
                 {"did": "T1", "name": "Tmp", "type": "Tmp", "value": "25"},
+                {
+                    "did": "DI2",
+                    "name": "Door_2",
+                    "type": "digital",
+                    "value": 1,
+                    "abaddr": 9,
+                    "hwtype": "FMM",
+                },
                 {"did": "", "name": "Tmp"},
                 "nope",
             ],
@@ -354,6 +623,8 @@ def test_parse_status_xml_and_rest_and_cgi_json():
     assert cgi_parsed["meta"]["source"] == "cgi_json"
     assert cgi_parsed["meta"]["serial"] == "123"
     assert "T1" in cgi_parsed["probes"]
+    assert cgi_parsed["probes"]["DI2"]["module_abaddr"] == 9
+    assert cgi_parsed["probes"]["DI2"]["module_hwtype"] == "FMM"
     assert cgi_parsed["outlets"][0]["device_id"] == "O1"
     assert cgi_parsed["feed"]["name"] == 3
     assert cgi_parsed["feed"]["active"] is True
@@ -486,11 +757,62 @@ def test_parse_status_rest_outputs_skips_invalid_entries_and_uses_name_fallback(
                 "nope",  # non-dict -> skipped
                 {"did": "", "name": ""},  # no did + no name -> skipped
                 {"name": "Outlet", "status": ["AON"]},  # name fallback for did
+                {"did": "6_1", "status": ["AON"], "intensity": 34.0},
+                {"did": "6_2", "status": ["AON"], "intensity": "35"},
             ]
         }
     )
     assert out["outlets"][0]["device_id"] == "Outlet"
     assert out["outlets"][0]["state"] == "AON"
+
+    assert out["outlets"][1]["intensity"] == 34
+    assert out["outlets"][1]["module_abaddr"] == 6
+    assert out["outlets"][2]["intensity"] == 35
+    assert out["outlets"][2]["module_abaddr"] == 6
+
+
+def test_parse_status_rest_outputs_intensity_int_branch():
+    out = coordinator.parse_status_rest(
+        {"outputs": [{"did": "6_3", "status": ["AON"], "intensity": 36}]}
+    )
+    assert out["outlets"][0]["intensity"] == 36
+    assert out["outlets"][0]["module_abaddr"] == 6
+
+
+def test_parse_status_rest_outputs_module_nested_fields_cover_branches():
+    out = coordinator.parse_status_rest(
+        {
+            "outputs": [
+                {
+                    "did": "O1",
+                    "status": ["AON"],
+                    "module": {"abaddr": 6, "hwtype": "vdm"},
+                }
+            ]
+        }
+    )
+    assert out["outlets"][0]["module_abaddr"] == 6
+    assert out["outlets"][0]["module_hwtype"] == "VDM"
+
+
+def test_parse_status_cgi_json_outputs_module_fields_cover_branches():
+    out = coordinator.parse_status_cgi_json(
+        {
+            "istat": {
+                "hostname": "apex",
+                "outputs": [
+                    {
+                        "did": "O1",
+                        "status": ["AON"],
+                        "module_abaddr": 7,
+                        "module_hwtype": "pm2",
+                    }
+                ],
+            }
+        }
+    )
+    assert out["outlets"][0]["module_abaddr"] == 7
+    assert out["outlets"][0]["module_hwtype"] == "PM2"
 
 
 def test_parse_status_cgi_json_with_non_dict_istat():

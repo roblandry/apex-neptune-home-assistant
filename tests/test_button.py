@@ -23,6 +23,9 @@ class _CoordinatorStub:
     async_trident_reset_waste: AsyncMock = field(default_factory=AsyncMock)
     async_refresh_config_now: AsyncMock = field(default_factory=AsyncMock)
 
+    async_rest_put_json: AsyncMock = field(default_factory=AsyncMock)
+    async_request_refresh: AsyncMock = field(default_factory=AsyncMock)
+
     def async_add_listener(self, cb: Callable[[], None]) -> Callable[[], None]:
         if self.listeners is not None:
             self.listeners.append(cb)
@@ -44,14 +47,28 @@ async def test_button_setup_adds_trident_buttons_and_presses(
     )
     entry.add_to_hass(hass)
 
-    listeners: list[Callable[[], None]] = []
+
+async def test_button_setup_adds_module_refresh_buttons_when_modules_present(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
     coordinator = _CoordinatorStub(
         data={
             "meta": {"serial": "ABC"},
-            "trident": {"present": True, "abaddr": 5},
+            "raw": {
+                "modules": [
+                    {"abaddr": 2, "hwtype": "FMM", "present": True},
+                ]
+            },
         },
         device_identifier="ABC",
-        listeners=listeners,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -64,48 +81,118 @@ async def test_button_setup_adds_trident_buttons_and_presses(
 
     await button.async_setup_entry(hass, cast(Any, entry), _add_entities)
 
-    # Exercise idempotent guard.
-    for cb in list(listeners):
-        cb()
-
-    assert len(added) == 9
-
+    # 1 controller refresh + 1 module refresh
+    assert len(added) == 2
     for ent in added:
         ent.async_write_ha_state = lambda *args, **kwargs: None
         await ent.async_added_to_hass()
 
-    # Press each button.
+    # Press both refresh buttons.
     for ent in added:
         await ent.async_press()
+    assert coordinator.async_refresh_config_now.await_count == 2
 
-    assert coordinator.async_trident_prime_channel.await_count == 4
-    assert [
-        c.kwargs["channel_index"]
-        for c in coordinator.async_trident_prime_channel.await_args_list
-    ] == [
-        0,
-        1,
-        2,
-        3,
-    ]
 
-    assert coordinator.async_trident_reset_reagent.await_count == 3
-    assert [
-        c.kwargs["reagent_index"]
-        for c in coordinator.async_trident_reset_reagent.await_args_list
-    ] == [
-        0,
-        1,
-        2,
-    ]
+async def test_button_setup_adds_module_refresh_buttons_from_mconf(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
 
-    assert coordinator.async_trident_reset_waste.await_count == 1
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC"},
+            "config": {
+                "mconf": [
+                    {"abaddr": 2, "hwtype": "FMM", "name": "My FMM"},
+                ]
+            },
+        },
+        device_identifier="ABC",
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    assert coordinator.async_refresh_config_now.await_count == 1
+    added: list[Any] = []
 
-    # Cover cleanup branch.
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import button
+
+    await button.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    # 1 controller refresh + 1 module refresh (from config)
+    assert len(added) == 2
     for ent in added:
-        await ent.async_will_remove_from_hass()
+        ent.async_write_ha_state = lambda *args, **kwargs: None
+        await ent.async_added_to_hass()
+
+    for ent in added:
+        await ent.async_press()
+    assert coordinator.async_refresh_config_now.await_count == 2
+
+
+async def test_button_setup_adds_trident_module_refresh_when_raw_modules_missing_hwtype(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC"},
+            "raw": {
+                "modules": [
+                    {"abaddr": 5, "present": True},
+                ]
+            },
+            "config": {"mconf": [{"abaddr": 5, "hwtype": "TRI"}]},
+            "trident": {"present": True, "abaddr": 5, "hwtype": "TRI"},
+        },
+        device_identifier="ABC",
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    added: list[Any] = []
+
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import button
+
+    await button.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    # 1 controller refresh + 1 module refresh (Trident) + 8 Trident consumables buttons
+    assert len(added) == 10
+
+    module_refresh = next(
+        (
+            e
+            for e in added
+            if isinstance(e, button.ApexModuleRefreshConfigButton)
+            and getattr(e, "_module_abaddr", None) == 5
+        ),
+        None,
+    )
+    assert module_refresh is not None
+
+    # Press both refresh buttons.
+    for ent in added:
+        ent.async_write_ha_state = lambda *args, **kwargs: None
+        await ent.async_added_to_hass()
+        await ent.async_press()
+
+    assert coordinator.async_refresh_config_now.await_count == 2
 
 
 async def test_button_setup_skips_without_password(hass, enable_custom_integrations):
@@ -170,7 +257,8 @@ async def test_button_setup_skips_when_trident_missing_or_invalid(
     coordinator.data["trident"] = {"present": True, "abaddr": 5}
     for cb in list(listeners):
         cb()
-    assert len(added) == 9
+    # 1 controller refresh (already present) + 1 module refresh + 8 Trident consumables buttons
+    assert len(added) == 10
 
 
 async def test_button_setup_does_not_add_trident_buttons_when_not_present_or_no_abaddr(

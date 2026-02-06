@@ -22,8 +22,10 @@ from homeassistant.util import slugify
 from .const import CONF_HOST, DOMAIN
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
+    build_aquabus_child_device_info_from_data,
     build_device_info,
     build_trident_device_info,
+    clean_hostname_display,
 )
 
 
@@ -47,7 +49,15 @@ def _as_int_0_1(value: Any) -> int | None:
     if isinstance(value, bool):
         return 1 if value else 0
     if isinstance(value, int):
-        return value if value in (0, 1) else None
+        if value in (0, 1):
+            return value
+        # Some firmwares/devices encode digital states as 100/200.
+        # Normalize to 0/1 to keep `opening` behavior consistent.
+        if value == 100:
+            return 1
+        if value == 200:
+            return 0
+        return None
     if isinstance(value, float):
         if value in (0.0, 1.0):
             return int(value)
@@ -56,6 +66,10 @@ def _as_int_0_1(value: Any) -> int | None:
         t = value.strip()
         if t in {"0", "1"}:
             return int(t)
+        if t == "100":
+            return 1
+        if t == "200":
+            return 0
         return None
     return None
 
@@ -226,7 +240,12 @@ async def async_setup_entry(
             icon="mdi:test-tube",
             value_fn=_trident_is_testing,
         )
-        tank_slug = slugify(str(entry.title or "tank").strip())
+        meta_any: Any = (coordinator.data or {}).get("meta", {})
+        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
+        )
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -272,7 +291,12 @@ async def async_setup_entry(
             icon="mdi:cup-off",
             value_fn=_trident_waste_full,
         )
-        tank_slug = slugify(str(entry.title or "tank").strip())
+        meta_any: Any = (coordinator.data or {}).get("meta", {})
+        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
+        )
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -335,7 +359,12 @@ async def async_setup_entry(
             ),
         ]
 
-        tank_slug = slugify(str(entry.title or "tank").strip())
+        meta_any: Any = (coordinator.data or {}).get("meta", {})
+        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
+        )
         abaddr = (
             cast(int, trident.get("abaddr"))
             if isinstance(trident.get("abaddr"), int)
@@ -399,7 +428,41 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
 
         self._attr_unique_id = f"{serial}_digital_{ref.key}".lower()
         self._attr_name = ref.name
-        self._attr_device_info = build_device_info(
+
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp
+            or str(meta.get("hostname") or "").strip()
+            or str(entry.title or "tank").strip()
+        )
+        key_slug = str(ref.key or "").strip().lower() or slugify(ref.name) or "di"
+        self._attr_suggested_object_id = f"{tank_slug}_di_{key_slug}"
+
+        first_probe = self._find_probe()
+        module_abaddr_any: Any = first_probe.get("module_abaddr")
+        module_abaddr = (
+            module_abaddr_any if isinstance(module_abaddr_any, int) else None
+        )
+
+        module_hwtype_hint: str | None = None
+        module_hwtype_any: Any = first_probe.get("module_hwtype")
+        if isinstance(module_hwtype_any, str) and module_hwtype_any.strip():
+            module_hwtype_hint = module_hwtype_any
+
+        module_device_info: DeviceInfo | None = (
+            build_aquabus_child_device_info_from_data(
+                host=host,
+                controller_meta=meta,
+                controller_device_identifier=coordinator.device_identifier,
+                data=coordinator.data or {},
+                module_abaddr=module_abaddr,
+                module_hwtype_hint=module_hwtype_hint,
+            )
+            if isinstance(module_abaddr, int)
+            else None
+        )
+
+        self._attr_device_info = module_device_info or build_device_info(
             host=host,
             meta=meta,
             device_identifier=coordinator.device_identifier,

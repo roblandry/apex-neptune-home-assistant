@@ -11,11 +11,66 @@ from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.util import slugify
 
 from .const import CONF_HOST, DOMAIN, LOGGER_NAME, PLATFORMS
-from .coordinator import ApexNeptuneDataUpdateCoordinator
+from .coordinator import ApexNeptuneDataUpdateCoordinator, clean_hostname_display
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
+
+
+async def _async_prefix_entity_ids_with_tank(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    tank_slug: str,
+) -> None:
+    """Ensure entity_ids are tank-prefixed for an existing install.
+
+    Home Assistant only uses `suggested_object_id` when an entity is first
+    created. For existing entity registry entries, we rename them once so they
+    include the tank slug.
+    """
+
+    if not tank_slug:
+        return
+
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        reg_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+        if not reg_entries:
+            return
+
+        for reg_entry in reg_entries:
+            domain, _, old_object_id = str(reg_entry.entity_id).partition(".")
+            if not domain or not old_object_id:
+                continue
+            if old_object_id.startswith(f"{tank_slug}_"):
+                continue
+            new_object_id = f"{tank_slug}_{old_object_id}"
+
+            # Make a valid, unique entity_id.
+            new_object_id = slugify(new_object_id) or new_object_id
+            new_entity_id = f"{domain}.{new_object_id}"
+            if ent_reg.async_get(new_entity_id) is not None:
+                i = 2
+                while True:
+                    candidate = f"{domain}.{new_object_id}_{i}"
+                    if ent_reg.async_get(candidate) is None:
+                        new_entity_id = candidate
+                        break
+                    i += 1
+
+            if new_entity_id != reg_entry.entity_id:
+                ent_reg.async_update_entity(
+                    reg_entry.entity_id, new_entity_id=new_entity_id
+                )
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception(
+            "Failed to migrate Apex entity_ids for entry_id=%s", entry.entry_id
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -76,6 +131,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Ensure tank slug shows up in entity_ids even when entities already exist.
+    hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+    tank_slug = slugify(
+        hostname_disp
+        or str(meta.get("hostname") or "").strip()
+        or str(entry.title or "tank").strip()
+    )
+    await _async_prefix_entity_ids_with_tank(hass, entry, tank_slug=tank_slug)
+
     return True
 
 

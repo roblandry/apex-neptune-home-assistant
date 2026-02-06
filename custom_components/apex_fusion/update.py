@@ -24,7 +24,10 @@ from .const import CONF_HOST, DOMAIN
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
+    build_module_device_info,
+    build_module_device_info_from_data,
     build_trident_device_info,
+    clean_hostname_display,
 )
 
 
@@ -177,12 +180,17 @@ class ApexUpdateEntity(UpdateEntity):
         self._attr_name = ref.name
 
         # Suggest entity ids that remain unique across multiple tanks.
-        tank_slug = slugify(str(entry.title or "tank").strip())
+        hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+        tank_slug = slugify(
+            hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
+        )
+
+        installed_version = ref.installed_fn(coordinator.data or {})
 
         # Only attach Trident-family modules by explicit hwtype (no heuristics).
         if ref.module_hwtype in {"TRI", "TNP"} and isinstance(ref.module_abaddr, int):
             self._attr_suggested_object_id = (
-                f"{tank_slug}_trident_addr{ref.module_abaddr}_firmware"
+                f"{tank_slug}_addr{ref.module_abaddr}_firmware"
             )
 
             trident_any: Any = (coordinator.data or {}).get("trident")
@@ -201,9 +209,30 @@ class ApexUpdateEntity(UpdateEntity):
                 trident_swrev=(str(trident.get("swrev") or "").strip() or None),
                 trident_serial=(str(trident.get("serial") or "").strip() or None),
             )
+        elif ref.module_hwtype and isinstance(ref.module_abaddr, int):
+            hw = str(ref.module_hwtype).strip().upper()
+            self._attr_suggested_object_id = (
+                f"{tank_slug}_addr{ref.module_abaddr}_firmware"
+            )
+
+            # Prefer coordinator-derived module metadata (name/hwrev/serial).
+            # Fall back to minimal device info if the module can't be resolved.
+            module_device_info = build_module_device_info_from_data(
+                host=host,
+                controller_device_identifier=coordinator.device_identifier,
+                data=coordinator.data or {},
+                module_abaddr=ref.module_abaddr,
+            )
+            self._attr_device_info = module_device_info or build_module_device_info(
+                host=host,
+                controller_device_identifier=coordinator.device_identifier,
+                module_hwtype=hw,
+                module_abaddr=ref.module_abaddr,
+                module_swrev=str(installed_version or "").strip() or None,
+            )
         else:
             # Controller update entity ids should also be tank-prefixed.
-            self._attr_suggested_object_id = f"{tank_slug}_controller_firmware"
+            self._attr_suggested_object_id = f"{tank_slug}_firmware"
             self._attr_device_info = build_device_info(
                 host=host,
                 meta=meta,
@@ -436,8 +465,8 @@ def _module_refs(data: dict[str, Any], serial_for_ids: str) -> list[_UpdateRef]:
 
             refs.append(
                 _UpdateRef(
-                    unique_id=f"{serial_for_ids}_update_{hwtype}_{module_id}".lower(),
-                    name=f"{hwtype} Firmware",
+                    unique_id=f"{serial_for_ids}_update_{module_id}".lower(),
+                    name="Firmware",
                     installed_fn=_installed_from_status_fn,
                     latest_fn=_latest_effective_fn,
                     release_summary_fn=_release_summary_fn_config,
@@ -535,8 +564,8 @@ def _module_refs(data: dict[str, Any], serial_for_ids: str) -> list[_UpdateRef]:
 
         refs.append(
             _UpdateRef(
-                unique_id=f"{serial_for_ids}_update_{hwtype}_{module_id}".lower(),
-                name=f"{hwtype} Firmware",
+                unique_id=f"{serial_for_ids}_update_{module_id}".lower(),
+                name="Firmware",
                 installed_fn=_installed_fn,
                 latest_fn=_latest_fn,
                 release_summary_fn=_release_summary_fn,
@@ -558,13 +587,9 @@ async def async_setup_entry(
     meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
     serial_for_ids = str(meta.get("serial") or host or "apex").replace(":", "_")
 
-    controller_type = (
-        str(meta.get("type") or meta.get("hardware") or "Apex").strip() or "Apex"
-    )
-
     controller_ref = _UpdateRef(
         unique_id=f"{serial_for_ids}_update_firmware".lower(),
-        name=f"{controller_type} Firmware",
+        name="Firmware",
         installed_fn=_controller_installed,
         latest_fn=_controller_latest_effective,
         release_summary_fn=_controller_release_summary,

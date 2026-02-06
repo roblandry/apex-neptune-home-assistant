@@ -310,6 +310,134 @@ async def test_select_entity_attributes_extract_percent_from_status_list(
     await ent.async_will_remove_from_hass()
 
 
+async def test_select_entity_attaches_to_module_device_when_unique_mconf_match(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_USERNAME: "admin", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC"},
+            "config": {
+                "mconf": [
+                    {"hwtype": "EB832", "abaddr": 3, "name": "Basement EB"},
+                    {"hwtype": "PM2", "abaddr": 6, "name": "PM2"},
+                ]
+            },
+            "raw": {
+                "modules": [
+                    {"hwtype": "EB832", "abaddr": 3, "swrev": 1},
+                ]
+            },
+            "outlets": [
+                {"name": "Outlet_1", "device_id": "O1", "state": "AON", "type": "EB832"}
+            ],
+        },
+        device_identifier="TEST",
+    )
+
+    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+
+    ent = ApexOutletModeSelect(
+        hass,
+        cast(Any, coordinator),
+        cast(Any, entry),
+        ref=_OutletRef(did="O1", name="Outlet 1"),
+    )
+
+    assert ent.device_info is not None
+    assert ent.device_info.get("name") == "Basement EB"
+    assert ent.device_info.get("via_device") == (DOMAIN, "TEST")
+    assert ent.device_info.get("identifiers") == {(DOMAIN, "TEST_module_EB832_3")}
+
+
+async def test_select_entity_falls_back_to_controller_when_ambiguous_mconf(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_USERNAME: "admin", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC"},
+            "config": {
+                "mconf": [
+                    {"hwtype": "EB832", "abaddr": 1},
+                    {"hwtype": "EB832", "abaddr": 2},
+                ]
+            },
+            "outlets": [
+                {"name": "Outlet_1", "device_id": "O1", "state": "AON", "type": "EB832"}
+            ],
+        },
+        device_identifier="TEST",
+    )
+
+    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+
+    ent = ApexOutletModeSelect(
+        hass,
+        cast(Any, coordinator),
+        cast(Any, entry),
+        ref=_OutletRef(did="O1", name="Outlet 1"),
+    )
+
+    assert ent.device_info is not None
+    assert ent.device_info.get("identifiers") == {(DOMAIN, "TEST")}
+
+
+async def test_select_entity_attaches_mxm_outlets_to_mxm_module_when_unique(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4", CONF_USERNAME: "admin", CONF_PASSWORD: "pw"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC"},
+            "config": {"mconf": [{"hwtype": "MXM", "abaddr": 9, "name": "MXM"}]},
+            "outlets": [
+                {
+                    "name": "Nero_5_F",
+                    "device_id": "O1",
+                    "state": "AOF",
+                    "type": "MXMPump|AI|Nero5",
+                }
+            ],
+        },
+        device_identifier="TEST",
+    )
+
+    from custom_components.apex_fusion.select import ApexOutletModeSelect, _OutletRef
+
+    ent = ApexOutletModeSelect(
+        hass,
+        cast(Any, coordinator),
+        cast(Any, entry),
+        ref=_OutletRef(did="O1", name="AI Nero 5"),
+    )
+
+    assert ent.device_info is not None
+    assert ent.device_info.get("identifiers") == {(DOMAIN, "TEST_module_MXM_9")}
+    assert ent.device_info.get("via_device") == (DOMAIN, "TEST")
+
+
 async def test_select_find_outlet_handles_non_list_and_non_dict(
     hass, enable_custom_integrations
 ):

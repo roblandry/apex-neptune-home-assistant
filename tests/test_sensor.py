@@ -44,9 +44,22 @@ def test_sensor_helpers_cover_all_branches():
     assert sensor._icon_for_probe_type("mg", "Mg") == "mdi:flask-outline"
     assert sensor._icon_for_probe_type("other", "x") == "mdi:gauge"
 
-    assert sensor._friendly_probe_name(name="Tmp", probe_type="Tmp") == "Temperature"
+    assert sensor._friendly_probe_name(name="Tmp", probe_type="Tmp") == "Tmp"
     assert sensor._friendly_probe_name(name="Temp", probe_type="Temp") == "Temperature"
+    assert sensor._friendly_probe_name(name="Tmp_2", probe_type="Temp") == "Temperature"
+    assert sensor._friendly_probe_name(name="Tmp2", probe_type="Tmp") == "Tmp2"
     assert sensor._friendly_probe_name(name="T1", probe_type="Tmp") == "T1"
+
+    assert sensor._friendly_probe_name(name="Alkx4", probe_type="alk") == "Alkalinity"
+    assert sensor._friendly_probe_name(name="Cax4", probe_type="ca") == "Calcium"
+    assert sensor._friendly_probe_name(name="Mgx4", probe_type="mg") == "Magnesium"
+    assert sensor._friendly_probe_name(name="Cond", probe_type="Cond") == "Conductivity"
+    assert (
+        sensor._friendly_probe_name(name="Salinity", probe_type="cond")
+        == "Conductivity"
+    )
+    assert sensor._friendly_probe_name(name="ORP", probe_type="orp") == "ORP"
+    assert sensor._friendly_probe_name(name="Redox", probe_type="orp") == "ORP"
 
     assert sensor.pretty_model("Nero5") == "Nero 5"
     assert sensor.pretty_model("Nero") == "Nero"
@@ -59,6 +72,26 @@ def test_sensor_helpers_cover_all_branches():
             outlet_name="Nero_5_F", outlet_type="MXMPump|AI|Nero5"
         )
         == "AI Nero 5 (Nero 5 F)"
+    )
+    assert (
+        sensor.friendly_outlet_name(outlet_name="Alk_4_4", outlet_type="selector")
+        == "Alkalinity Testing"
+    )
+    assert (
+        sensor.friendly_outlet_name(outlet_name="Ca_4_5", outlet_type="selector")
+        == "Ca 4 5"
+    )
+    assert (
+        sensor.friendly_outlet_name(outlet_name="Mg_4_6", outlet_type="selector")
+        == "Mg 4 6"
+    )
+    assert (
+        sensor.friendly_outlet_name(outlet_name="TNP_5_1", outlet_type="selector")
+        == "Trident NP"
+    )
+    assert (
+        sensor.friendly_outlet_name(outlet_name="Trident_4_3", outlet_type="selector")
+        == "Combined Testing"
     )
     # pretty_name already included in label -> label only
     assert (
@@ -84,8 +117,7 @@ def test_sensor_helpers_cover_all_branches():
     assert sensor._as_float(object()) is None
 
     assert (
-        sensor._units_and_meta(probe_name="x", probe_type="amps", value=1.0)[0]
-        is not None
+        sensor._units_and_meta(probe_name="x", probe_type="amps", value=1.0)[0] is None
     )
     assert sensor._units_and_meta(probe_name="x", probe_type="ph", value=8.1)[0] is None
     assert (
@@ -108,7 +140,7 @@ def test_sensor_helpers_cover_all_branches():
     )
     assert (
         sensor._units_and_meta(probe_name="Tmp", probe_type="tmp", value=25.0)[0]
-        is not None
+        is None
     )
     assert (
         sensor._units_and_meta(probe_name="x", probe_type="other", value=1.0)[0] is None
@@ -258,7 +290,7 @@ async def test_sensor_setup_creates_entities_and_updates(
 
     # Trident diagnostics should be grouped under the Trident device when abaddr is known.
     assert waste.device_info is not None
-    assert waste.device_info.get("name") == "Trident (Addr 5)"
+    assert waste.device_info.get("name") == "Trident (5)"
     assert waste.device_info.get("via_device") == (DOMAIN, "ABC")
 
     # Update probe values to hit coercion/branches.
@@ -320,6 +352,252 @@ async def test_sensor_setup_trident_not_dict_is_ignored(
 
     # Trident is not a dict -> no Trident entities should be created.
     assert all(getattr(e, "_attr_name", "") not in {"Trident Status"} for e in added)
+
+
+async def test_probe_sensor_attaches_to_module_device_when_probe_has_module_abaddr(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC", "hostname": "apex"},
+            "config": {
+                "mconf": [
+                    {"abaddr": 3, "hwtype": "FMM", "name": "My FMM"},
+                ]
+            },
+            "network": {"ipaddr": "1.2.3.4"},
+            "trident": {},
+            "probes": {
+                "T1": {
+                    "name": "T1",
+                    "type": "Tmp",
+                    "value": "25",
+                    "value_raw": "25",
+                    "module_abaddr": 3,
+                }
+            },
+            "outlets": [],
+            "mxm_devices": {},
+        },
+        last_update_success=True,
+        device_identifier="TEST",
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    added: list[Any] = []
+
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import sensor
+
+    await sensor.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    probe_entities = [e for e in added if isinstance(e, sensor.ApexProbeSensor)]
+    assert probe_entities
+    t1 = next(e for e in probe_entities if e._ref.key == "T1")
+    assert t1.device_info is not None
+    assert t1.device_info.get("name") == "My FMM"
+    assert t1.device_info.get("via_device") == (DOMAIN, "TEST")
+
+
+async def test_probe_sensor_falls_back_to_module_hwtype_when_data_missing(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC", "hostname": "apex"},
+            "network": {"ipaddr": "1.2.3.4"},
+            "trident": {},
+            "probes": {
+                "T1": {
+                    "name": "T1",
+                    "type": "Tmp",
+                    "value": "25",
+                    "value_raw": "25",
+                    "module_abaddr": 3,
+                    "module_hwtype": "FMM",
+                }
+            },
+            "outlets": [],
+            "mxm_devices": {},
+        },
+        last_update_success=True,
+        device_identifier="TEST",
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    added: list[Any] = []
+
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import sensor
+
+    await sensor.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    probe_entities = [e for e in added if isinstance(e, sensor.ApexProbeSensor)]
+    assert probe_entities
+    t1 = next(e for e in probe_entities if e._ref.key == "T1")
+    assert t1.device_info is not None
+    assert t1.device_info.get("name") == "Fluid Monitoring Module (3)"
+    assert t1.device_info.get("via_device") == (DOMAIN, "TEST")
+    assert t1.device_info.get("identifiers") == {(DOMAIN, "TEST_module_FMM_3")}
+
+
+async def test_outlet_intensity_sensor_creates_vdm_module_device(
+    hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "1.2.3.4"},
+        unique_id="1.2.3.4",
+        title="Apex (1.2.3.4)",
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC", "hostname": "80g_Frag_Tank"},
+            "network": {},
+            "trident": {},
+            "config": {"mconf": [{"abaddr": 6, "hwtype": "VDM", "name": "VDM_6"}]},
+            "probes": {},
+            "outlets": [
+                {
+                    "name": "VarSpd3_6_3",
+                    "device_id": "6_3",
+                    "type": "variable",
+                    "state": "PF3",
+                    "intensity": 100,
+                    "status": ["PF3", "100", "OK", ""],
+                    "module_abaddr": 6,
+                }
+            ],
+        },
+        last_update_success=True,
+        device_identifier="TEST",
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    added: list[Any] = []
+
+    def _add_entities(new_entities, update_before_add: bool = False):
+        added.extend(list(new_entities))
+
+    from custom_components.apex_fusion import sensor
+
+    await sensor.async_setup_entry(hass, cast(Any, entry), _add_entities)
+
+    intensity_entities = [
+        e for e in added if isinstance(e, sensor.ApexOutletIntensitySensor)
+    ]
+    assert intensity_entities
+
+    ent = next(e for e in intensity_entities if e._ref.did == "6_3")
+    assert ent.device_info is not None
+    assert ent.device_info.get("name") == "LED & Pump Control Module (6)"
+    assert ent.device_info.get("via_device") == (DOMAIN, "TEST")
+    assert ent.device_info.get("identifiers") == {(DOMAIN, "TEST_module_VDM_6")}
+
+
+async def test_outlet_intensity_sensor_refresh_and_lifecycle_cover_branches():
+    from custom_components.apex_fusion import sensor
+    from custom_components.apex_fusion.sensor import _OutletIntensityRef
+
+    listeners: list[Callable[[], None]] = []
+    coordinator = _CoordinatorStub(
+        data={
+            "meta": {"serial": "ABC", "hostname": "tank"},
+            "outlets": [
+                "nope",
+                {
+                    "name": "VarSpd3_6_3",
+                    "device_id": "6_3",
+                    "type": "variable",
+                    "state": "PF3",
+                    "intensity": 100,
+                    "status": ["PF3", "100", "OK", ""],
+                    "module_abaddr": 6,
+                },
+            ],
+        },
+        last_update_success=True,
+        device_identifier="TEST",
+        listeners=listeners,
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "1.2.3.4"})
+
+    ent = sensor.ApexOutletIntensitySensor(
+        cast(Any, coordinator),
+        cast(Any, entry),
+        ref=_OutletIntensityRef(did="6_3", name="VarSpd3_6_3"),
+    )
+    ent.async_write_ha_state = lambda *args, **kwargs: None
+
+    # Non-list outlets -> find_outlet returns empty + refresh sets None.
+    coordinator.data["outlets"] = "nope"
+    assert ent._find_outlet() == {}
+    ent._refresh()
+    assert ent.native_value is None
+
+    # List outlets with no matching did: covers non-dict skip + final return {}.
+    coordinator.data["outlets"] = ["nope", {"device_id": "other"}]
+    assert ent._find_outlet() == {}
+    ent._handle_coordinator_update()
+    assert ent.native_value is None
+    assert ent.icon == "mdi:power-socket-us"
+
+    # Bool intensity should not be treated as numeric.
+    coordinator.data["outlets"] = [
+        {"device_id": "6_3", "intensity": True, "type": "variable"}
+    ]
+    ent._handle_coordinator_update()
+    assert ent.native_value is None
+    assert ent.icon == "mdi:power-socket-us"
+
+    # Numeric intensity + outlet type should update icon and attributes.
+    coordinator.data["outlets"] = [
+        {
+            "device_id": "6_3",
+            "intensity": 50,
+            "type": "light",
+            "state": "PF3",
+            "output_id": "3",
+            "gid": "g",
+            "status": ["PF3"],
+        }
+    ]
+    ent._handle_coordinator_update()
+    assert ent.native_value == 50.0
+    assert ent.icon == "mdi:lightbulb"
+    attrs = ent.extra_state_attributes or {}
+    assert attrs.get("state") == "PF3"
+    assert attrs.get("type") == "light"
+    assert attrs.get("output_id") == "3"
+    assert attrs.get("gid") == "g"
+    assert attrs.get("status") == ["PF3"]
+
+    await ent.async_added_to_hass()
+    assert listeners
+    await ent.async_will_remove_from_hass()
+    assert ent._unsub is None
 
 
 async def test_sensor_setup_without_network_or_firmware_adds_no_diagnostics(

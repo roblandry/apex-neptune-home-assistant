@@ -130,6 +130,23 @@ This integration provides entities across these Home Assistant platforms:
   - Controller firmware update entity, named by controller type (example: `AC6J Firmware`)
   - Module firmware update entities (FMM, PM2, VDM, TRI, etc)
 
+### Naming & Uniqueness (important)
+
+Home Assistant entity_ids must be globally unique within your HA instance.
+
+This integration intentionally prefixes **suggested entity IDs** with a tank/controller slug derived from the controller hostname (spaces/underscores normalized), so you can:
+
+- Run **multiple Apex controllers** in one HA instance without entity_id collisions.
+- Re-add / migrate controllers without accidentally reusing old entity IDs.
+
+Notes:
+
+- This affects **entity_id** (used in automations), not the entity's display name.
+- Home Assistant only applies suggested IDs when an entity is first created, so upgrading may not change existing entity_ids automatically.
+- To help existing installs, the integration includes a one-time entity-registry migration that prefixes existing entity_ids with the tank slug when safe.
+
+If you rely on old entity_ids in automations, review the Entity Registry after upgrading.
+
 ### Config Refresh
 
 Config is larger and changes less frequently than status, so it is refreshed on a slower cadence than `/rest/status`.
@@ -238,6 +255,9 @@ When a Trident module is present (`hwtype: TRI`), the integration exposes:
 - Trident Waste Full + Trident Reagent A/B/C Empty binary sensors
 - Trident controls: Prime (A/B/C/Sample), Reset Reagent (A/B/C), Reset Waste
 - Trident Waste Container Size number entity (mL)
+
+Some firmwares also expose Trident **selector outputs** (for example names like `Trident_5_3` / `Alk_5_4`).
+When present, they appear as output mode selects (Off/Auto/On). Setting them to **On** may initiate the corresponding test, depending on firmware.
 
 ## Development
 

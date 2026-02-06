@@ -20,6 +20,7 @@ from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
     build_trident_device_info,
+    clean_hostname_display,
 )
 
 
@@ -100,7 +101,12 @@ class ApexTridentWasteSizeNumber(NumberEntity):
                 else None
             )
 
-            tank_slug = slugify(str(entry.title or "tank").strip())
+            meta_any: Any = (coordinator.data or {}).get("meta")
+            meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+            hostname_disp = clean_hostname_display(str(meta.get("hostname") or ""))
+            tank_slug = slugify(
+                hostname_disp or str(meta.get("hostname") or "").strip() or "tank"
+            )
             self._attr_suggested_object_id = (
                 f"{tank_slug}_trident_addr{trident_abaddr_any}_waste_container_size"
             )
