@@ -65,17 +65,13 @@ As of 2026-01-31, I actively run this integration against:
 
 ### HACS (Custom Repository)
 
-> [!CAUTION]
-> This is a Work In Progress and is subject to changes. It will be added to HACS once complete.
-
-<del>
-
 1. HACS → Integrations → 3-dot menu → **Custom repositories**
 2. Add this repository URL as **Integration**
 3. Install **Apex Fusion (Local)**
 4. Restart Home Assistant
 
-</del>
+Once this repository is accepted into the HACS default store, it will no longer
+need to be added as a custom repository.
 
 ### Manual
 
