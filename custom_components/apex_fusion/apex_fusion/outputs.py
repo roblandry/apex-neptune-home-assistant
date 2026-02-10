@@ -7,16 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.exceptions import HomeAssistantError
-
-from ..const import (
-    ICON_ALARM,
-    ICON_LIGHTBULB,
-    ICON_POWER_SOCKET_US,
-    ICON_PUMP,
-    ICON_RADIATOR,
-    ICON_TOGGLE_SWITCH_OUTLINE,
-)
+ICON_PUMP = "mdi:pump"
+ICON_LIGHTBULB = "mdi:lightbulb"
+ICON_RADIATOR = "mdi:radiator"
+ICON_POWER_SOCKET_US = "mdi:power-socket-us"
+ICON_ALARM = "mdi:alarm"
+ICON_TOGGLE_SWITCH_OUTLINE = "mdi:toggle-switch-outline"
 
 # -----------------------------------------------------------------------------
 # Formatting
@@ -186,7 +182,7 @@ class OutletMode:
             Controller mode token suitable for REST commands.
 
         Raises:
-            HomeAssistantError: If the option label is invalid.
+            ValueError: If the option label is invalid.
         """
         t = (option or "").strip().lower()
         if t == "auto":
@@ -195,7 +191,7 @@ class OutletMode:
             return "ON"
         if t == "off":
             return "OFF"
-        raise HomeAssistantError(f"Invalid option: {option}")
+        raise ValueError(f"Invalid option: {option}")
 
     @staticmethod
     def icon_for_outlet_select(outlet_name: str, outlet_type: str | None) -> str | None:

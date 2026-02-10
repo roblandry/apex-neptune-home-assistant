@@ -25,7 +25,7 @@
     }
   },
   "prettier.enable": false,
-  "python.analysis.diagnosticMode": "workspace",
+  // "python.analysis.diagnosticMode": "workspace",
   "ruff.lineLength": 88,
   "ruff.useBundled": false,
   "ruff.path": [

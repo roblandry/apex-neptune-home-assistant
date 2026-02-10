@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
 
-from .apex_fusion import ApexFusionContext
+from .apex_fusion.context import context_from_status
 from .const import CONF_HOST, DOMAIN, LOGGER_NAME, PLATFORMS
 from .coordinator import ApexNeptuneDataUpdateCoordinator
 
@@ -142,7 +142,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Ensure tank slug shows up in entity_ids even when entities already exist.
-    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    ctx = context_from_status(
+        host=host,
+        entry_title=entry.title,
+        controller_device_identifier=coordinator.device_identifier,
+        status=coordinator.data,
+    )
     tank_slug = ctx.tank_slug_with_entry_title(entry.title)
     await _async_prefix_entity_ids_with_tank(hass, entry, tank_slug=tank_slug)
 

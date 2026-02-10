@@ -1,19 +1,58 @@
 """Apex Fusion identity/context helpers.
 
-This module derives stable identifiers and naming slugs from a config entry and
-coordinator data.
+This module is part of the internal API package and intentionally avoids
+Home Assistant imports.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.util import slugify
+from .util import slugify_label
 
-from ..const import CONF_HOST
-from ..coordinator import ApexNeptuneDataUpdateCoordinator, clean_hostname_display
+
+def clean_hostname_display(hostname: str | None) -> str | None:
+    """Return a display-friendly hostname/tank name.
+
+    Controllers commonly report hostnames with underscores. UIs read better with
+    spaces, so normalize for display only.
+    """
+
+    h = str(hostname or "").strip()
+    if not h:
+        return None
+    return h.replace("_", " ").strip() or None
+
+
+def context_from_status(
+    *,
+    host: str,
+    entry_title: str | None,
+    controller_device_identifier: str,
+    status: Mapping[str, Any] | None,
+) -> "ApexFusionContext":
+    """Build an `ApexFusionContext` from primitive inputs and normalized status.
+
+    This is intentionally HA-free so the internal API package can be used from
+    the CLI and so the HA integration can stay thin.
+    """
+
+    data = status or {}
+    meta_any: Any = data.get("meta", {})
+    meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, Mapping) else {}
+
+    hostname_raw = str(meta.get("hostname") or "")
+    hostname_disp = clean_hostname_display(hostname_raw) or ""
+
+    return ApexFusionContext.from_meta(
+        host=host,
+        meta=meta,
+        controller_device_identifier=controller_device_identifier,
+        hostname_disp=hostname_disp,
+        entry_title=entry_title,
+    )
+
 
 # -----------------------------------------------------------------------------
 # Context
@@ -41,38 +80,54 @@ class ApexFusionContext:
     tank_slug: str
 
     @classmethod
-    def from_entry_and_coordinator(
-        cls, entry: ConfigEntry, coordinator: ApexNeptuneDataUpdateCoordinator
+    def from_meta(
+        cls,
+        *,
+        host: str,
+        meta: Mapping[str, Any] | None,
+        controller_device_identifier: str,
+        hostname_disp: str | None = None,
+        entry_title: str | None = None,
     ) -> "ApexFusionContext":
-        """Create an identity context from HA objects.
+        """Create an identity context from controller meta and host information.
 
         Args:
-            entry: Home Assistant config entry for this integration.
-            coordinator: Data update coordinator for this entry.
+            host: Controller host/IP.
+            meta: Controller meta mapping (serial/hostname/type/hardware/etc.).
+            controller_device_identifier: Stable identifier used for HA DeviceInfo.
+            hostname_disp: Display-friendly hostname (optional).
+            entry_title: Config entry title (optional).
 
         Returns:
             A populated `ApexFusionContext` instance.
         """
-        host = str(entry.data.get(CONF_HOST, ""))
+        meta_any: Any = meta or {}
+        if isinstance(meta_any, Mapping):
+            meta_map = cast(Mapping[str, Any], meta_any)
+            meta_dict = dict(meta_map)
+        else:
+            meta_dict = {}
 
-        data = coordinator.data or {}
-        meta_any: Any = data.get("meta", {})
-        meta = cast(dict[str, Any], meta_any) if isinstance(meta_any, dict) else {}
+        host_s = str(host or "")
+        serial_for_ids = str(meta_dict.get("serial") or host_s or "apex").replace(
+            ":", "_"
+        )
 
-        serial_for_ids = str(meta.get("serial") or host or "apex").replace(":", "_")
+        hostname_raw = str(meta_dict.get("hostname") or "").strip()
+        hostname_disp_s = str(hostname_disp or "").strip()
 
-        hostname_raw = str(meta.get("hostname") or "")
-        hostname_disp = clean_hostname_display(hostname_raw) or ""
-
-        # Preserve the existing preference order used throughout the integration.
-        tank_slug = slugify(hostname_disp or hostname_raw.strip() or "tank")
+        tank_slug = slugify_label(
+            hostname_disp_s or hostname_raw or str(entry_title or "") or "tank"
+        )
+        if not tank_slug:
+            tank_slug = slugify_label(str(entry_title or "")) or "tank"
 
         return cls(
-            host=host,
-            meta=meta,
-            controller_device_identifier=coordinator.device_identifier,
+            host=host_s,
+            meta=meta_dict,
+            controller_device_identifier=str(controller_device_identifier or ""),
             serial_for_ids=serial_for_ids,
-            hostname_disp=hostname_disp,
+            hostname_disp=hostname_disp_s,
             tank_slug=tank_slug,
         )
 
@@ -89,7 +144,7 @@ class ApexFusionContext:
         hostname_raw = str(self.meta.get("hostname") or "").strip()
         title = str(entry_title or "").strip()
         return (
-            slugify(self.hostname_disp or hostname_raw or title or "tank")
-            or title
+            slugify_label(self.hostname_disp or hostname_raw or title or "tank")
+            or slugify_label(title)
             or "tank"
         )

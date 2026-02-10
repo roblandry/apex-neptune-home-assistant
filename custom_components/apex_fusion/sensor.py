@@ -20,6 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
+    UnitOfTemperature,
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
@@ -28,20 +29,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import slugify
 
-from .apex_fusion import ApexFusionContext
+from .apex_fusion.context import context_from_status
 from .apex_fusion.data_fields import section_field
 from .apex_fusion.discovery import ApexDiscovery, OutletIntensityRef, ProbeRef
+from .apex_fusion.modules.trident import trident_level_ml
 from .apex_fusion.network import network_field
-from .apex_fusion.outputs import (
-    icon_for_outlet_type,
-)
-from .apex_fusion.probes import (
-    as_float,
-    icon_for_probe_type,
-    units_and_meta,
-)
-from .apex_fusion.trident import trident_level_ml
+from .apex_fusion.outputs import icon_for_outlet_type
+from .apex_fusion.probes import as_float, icon_for_probe_type, units_and_meta
 from .const import (
+    CONF_HOST,
     DOMAIN,
     ICON_ALERT_CIRCLE_OUTLINE,
     ICON_BEAKER_OUTLINE,
@@ -66,6 +62,36 @@ from .coordinator import (
 _SIMPLE_REST_SINGLE_SENSOR_MODE = False
 
 
+def _sensor_device_class_from_token(token: str | None) -> SensorDeviceClass | None:
+    if not token:
+        return None
+    t = str(token).strip().lower()
+    if t == "temperature":
+        return SensorDeviceClass.TEMPERATURE
+    return None
+
+
+def _sensor_state_class_from_token(token: str | None) -> SensorStateClass | None:
+    if not token:
+        return None
+    t = str(token).strip().lower()
+    if t == "measurement":
+        return SensorStateClass.MEASUREMENT
+    if t == "total":
+        return SensorStateClass.TOTAL
+    if t == "total_increasing":
+        return SensorStateClass.TOTAL_INCREASING
+    return None
+
+
+def _temperature_unit_from_symbol(symbol: str | None) -> str | None:
+    if symbol == "°C":
+        return UnitOfTemperature.CELSIUS
+    if symbol == "°F":
+        return UnitOfTemperature.FAHRENHEIT
+    return symbol
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -77,7 +103,13 @@ async def async_setup_entry(
         async_add_entities: Callback to add entities.
     """
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    host = str(entry.data.get(CONF_HOST, "") or "")
+    ctx = context_from_status(
+        host=host,
+        entry_title=entry.title,
+        controller_device_identifier=coordinator.device_identifier,
+        status=coordinator.data,
+    )
 
     # Developer toggle: when enabled, only expose a single REST debug sensor.
     if _SIMPLE_REST_SINGLE_SENSOR_MODE:
@@ -319,7 +351,13 @@ class ApexRestDebugSensor(SensorEntity):
         self._coordinator = coordinator
         self._entry = entry
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_rest_debug_keys".lower()
         self._attr_name = "REST Status Keys"
@@ -415,7 +453,13 @@ class ApexDiagnosticSensor(SensorEntity):
         self._entry = entry
         self._value_fn = value_fn
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = unique_id
         self._attr_name = name
@@ -499,7 +543,13 @@ class ApexProbeSensor(SensorEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
         coordinator_data = coordinator.data or {}
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_probe_{ref.key}".lower()
@@ -569,15 +619,15 @@ class ApexProbeSensor(SensorEntity):
         raw_value: Any = p.get("value")
         value_f = as_float(raw_value)
 
-        unit, device_class, state_class = units_and_meta(
+        unit, device_class_token, state_class_token = units_and_meta(
             probe_name=self._ref.name,
             probe_type=probe_type,
             value=value_f,
         )
 
-        self._attr_native_unit_of_measurement = unit
-        self._attr_device_class = device_class
-        self._attr_state_class = state_class
+        self._attr_native_unit_of_measurement = _temperature_unit_from_symbol(unit)
+        self._attr_device_class = _sensor_device_class_from_token(device_class_token)
+        self._attr_state_class = _sensor_state_class_from_token(state_class_token)
         self._attr_icon = icon_for_probe_type(probe_type, self._ref.name)
 
     def _read_native_value(self) -> StateType:
@@ -648,7 +698,13 @@ class ApexOutletIntensitySensor(SensorEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
         coordinator_data = coordinator.data or {}
 
         self._attr_unique_id = (

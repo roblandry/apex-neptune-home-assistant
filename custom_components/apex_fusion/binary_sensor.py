@@ -19,16 +19,17 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import slugify
 
-from .apex_fusion import ApexFusionContext
+from .apex_fusion.context import context_from_status
 from .apex_fusion.discovery import ApexDiscovery, DigitalProbeRef
 from .apex_fusion.inputs import DigitalValueCodec
-from .apex_fusion.network import network_bool
-from .apex_fusion.trident import (
+from .apex_fusion.modules.trident import (
     trident_is_testing,
     trident_reagent_empty,
     trident_waste_full,
 )
+from .apex_fusion.network import network_bool
 from .const import (
+    CONF_HOST,
     DOMAIN,
     ICON_CUP_OFF,
     ICON_FLASK_EMPTY,
@@ -69,7 +70,13 @@ async def async_setup_entry(
         None.
     """
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    host = str(entry.data.get(CONF_HOST, "") or "")
+    ctx = context_from_status(
+        host=host,
+        entry_title=entry.title,
+        controller_device_identifier=coordinator.device_identifier,
+        status=coordinator.data,
+    )
 
     added_digital_keys: set[str] = set()
 
@@ -319,7 +326,13 @@ class ApexDigitalProbeBinarySensor(BinarySensorEntity):
         self._entry = entry
         self._ref = ref
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_digital_{ref.key}".lower()
         self._attr_name = ref.name
@@ -434,7 +447,13 @@ class ApexDiagnosticBinarySensor(BinarySensorEntity):
         self._entry = entry
         self._ref = ref
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_diag_bool_{ref.key}".lower()
         self._attr_name = ref.name
@@ -499,7 +518,13 @@ class ApexBinarySensor(ApexDiagnosticBinarySensor):
             suggested_object_id=suggested_object_id,
         )
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         # Use a distinct unique_id prefix so entity ids differ from diagnostics.
         self._attr_unique_id = f"{ctx.serial_for_ids}_bool_{ref.key}".lower()

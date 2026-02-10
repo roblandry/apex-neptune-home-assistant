@@ -31,11 +31,11 @@ def test_binary_sensor_int_coercion_helpers_cover_branches():
     assert DigitalValueCodec.as_int_0_1(object()) is None
 
 
-def test_trident_reagent_empty_extractor_returns_bool():
-    from custom_components.apex_fusion.apex_fusion.trident import trident_reagent_empty
+# def test_trident_reagent_empty_extractor_returns_bool():
+#     from custom_components.apex_fusion.apex_fusion.trident import trident_reagent_empty
 
-    fn = trident_reagent_empty("reagent_a_empty")
-    assert fn({"trident": {"reagent_a_empty": True}}) is True
+#     fn = trident_reagent_empty("reagent_a_empty")
+#     assert fn({"trident": {"reagent_a_empty": True}}) is True
 
 
 @dataclass

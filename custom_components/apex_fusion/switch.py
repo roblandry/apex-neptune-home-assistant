@@ -27,7 +27,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .apex_fusion import ApexFusionContext
+from .apex_fusion.context import context_from_status
 from .apex_fusion.util import to_int
 from .const import (
     CONF_HOST,
@@ -98,7 +98,13 @@ class ApexFeedModeSwitch(SwitchEntity):
         self._ref = ref
         self._unsub: Callable[[], None] | None = None
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_feed_{ref.did}".lower()
         self._attr_name = ref.name

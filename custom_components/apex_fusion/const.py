@@ -10,6 +10,8 @@ from typing import Final
 
 from homeassistant.const import Platform
 
+# from .modules import MODULE_HWTYPE_FRIENDLY_NAMES as _MODULE_HWTYPE_FRIENDLY_NAMES
+
 DOMAIN: Final = "apex_fusion"
 
 # Use a stable logger name so users can configure logging via
@@ -42,19 +44,10 @@ PLATFORMS: Final[list[Platform]] = [
 #
 # These are used for Home Assistant device naming (not for identifiers), so the
 # UI shows descriptive names instead of short hwtype tokens.
-MODULE_HWTYPE_FRIENDLY_NAMES: Final[dict[str, str]] = {
-    "FMM": "Fluid Monitoring Module",
-    "PM2": "Salinity Probe Module",
-    "PM1": "pH/ORP Probe Module",
-    "MXM": "Mobius Wireless Control Module",
-    "VDM": "LED & Pump Control Module",
-    "PM3": "Dissolved Oxygen Module",
-    "AFS": "Automatic Feeding System",
-    "LSM": "Lunar Simulator Module",
-    # Common/related modules (not explicitly requested, but keeps naming tidy).
-    "TRI": "Trident",
-    "TNP": "Trident NP",
-}
+#
+# Kept in separate per-module files under `custom_components/apex_fusion/modules/`
+# so new modules can be added with minimal code churn.
+# MODULE_HWTYPE_FRIENDLY_NAMES: Final[dict[str, str]] = _MODULE_HWTYPE_FRIENDLY_NAMES
 
 # Icons
 

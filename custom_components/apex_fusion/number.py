@@ -14,8 +14,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .apex_fusion import ApexFusionContext
-from .const import CONF_PASSWORD, DOMAIN, ICON_CUP_WATER
+from .apex_fusion.context import context_from_status
+from .const import CONF_HOST, CONF_PASSWORD, DOMAIN, ICON_CUP_WATER
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
@@ -77,7 +77,13 @@ class ApexTridentWasteSizeNumber(NumberEntity):
         self._entry = entry
         self._unsub: Callable[[], None] | None = None
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = f"{ctx.serial_for_ids}_trident_waste_size_ml".lower()
         # If we can attach to a Trident device, keep the entity name short.

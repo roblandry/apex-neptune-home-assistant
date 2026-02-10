@@ -1,7 +1,12 @@
-"""Small utility helpers used across the integration."""
+"""Small utility helpers used across the integration.
+
+This module intentionally avoids Home Assistant imports so it can be reused by
+the internal API package.
+"""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # -----------------------------------------------------------------------------
@@ -28,3 +33,24 @@ def to_int(value: Any) -> int | None:
         if t.isdigit():
             return int(t)
     return None
+
+
+def slugify_label(value: str) -> str:
+    """Convert a label to a stable slug.
+
+    The internal API package uses this helper instead of Home Assistant's
+    `homeassistant.util.slugify` to keep the package free of HA dependencies.
+
+    Args:
+        value: Label to slugify.
+
+    Returns:
+        A lowercase string containing only ASCII letters, digits, and
+        underscores.
+    """
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text

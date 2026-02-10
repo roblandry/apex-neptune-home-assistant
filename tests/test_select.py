@@ -251,7 +251,7 @@ def test_select_helpers_cover_all_branches():
     assert OutletMode.mode_from_option("Auto") == "AUTO"
     assert OutletMode.mode_from_option("On") == "ON"
     assert OutletMode.mode_from_option("Off") == "OFF"
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(ValueError):
         OutletMode.mode_from_option("nope")
 
     assert OutletMode.icon_for_outlet_select("Alarm 1 2", "EB832") == "mdi:alarm"

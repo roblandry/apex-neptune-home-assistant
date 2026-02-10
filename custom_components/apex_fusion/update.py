@@ -20,12 +20,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .apex_fusion import (
-    ApexFusionContext,
     mconf_modules_from_data,
     raw_modules_from_data,
     raw_nstat_from_data,
 )
-from .const import DOMAIN
+from .apex_fusion.context import context_from_status
+from .const import CONF_HOST, DOMAIN
 from .coordinator import (
     ApexNeptuneDataUpdateCoordinator,
     build_device_info,
@@ -130,7 +130,13 @@ class ApexUpdateEntity(UpdateEntity):
         self._entry = entry
         self._ref = ref
 
-        ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+        host = str(entry.data.get(CONF_HOST, "") or "")
+        ctx = context_from_status(
+            host=host,
+            entry_title=entry.title,
+            controller_device_identifier=coordinator.device_identifier,
+            status=coordinator.data,
+        )
 
         self._attr_unique_id = ref.unique_id
         self._attr_name = ref.name
@@ -541,7 +547,13 @@ async def async_setup_entry(
 ) -> None:
     coordinator: ApexNeptuneDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    ctx = ApexFusionContext.from_entry_and_coordinator(entry, coordinator)
+    host = str(entry.data.get(CONF_HOST, "") or "")
+    ctx = context_from_status(
+        host=host,
+        entry_title=entry.title,
+        controller_device_identifier=coordinator.device_identifier,
+        status=coordinator.data,
+    )
     serial_for_ids = ctx.serial_for_ids
 
     controller_ref = _UpdateRef(
