@@ -9,15 +9,6 @@ from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 
-from ..const import (
-    ICON_ALARM,
-    ICON_LIGHTBULB,
-    ICON_POWER_SOCKET_US,
-    ICON_PUMP,
-    ICON_RADIATOR,
-    ICON_TOGGLE_SWITCH_OUTLINE,
-)
-
 # -----------------------------------------------------------------------------
 # Formatting
 # -----------------------------------------------------------------------------
@@ -90,25 +81,6 @@ def friendly_outlet_name(*, outlet_name: str, outlet_type: str | None) -> str:
         return label
 
     return raw_name.replace("_", " ").strip()
-
-
-def icon_for_outlet_type(outlet_type: str | None) -> str | None:
-    """Return an icon for an outlet based on its device type.
-
-    Args:
-        outlet_type: Raw outlet type token.
-
-    Returns:
-        A Material Design Icon string.
-    """
-    t = (outlet_type or "").strip().upper()
-    if "PUMP" in t:
-        return ICON_PUMP
-    if "LIGHT" in t:
-        return ICON_LIGHTBULB
-    if "HEATER" in t:
-        return ICON_RADIATOR
-    return ICON_POWER_SOCKET_US
 
 
 class OutletMode:
@@ -196,27 +168,3 @@ class OutletMode:
         if t == "off":
             return "OFF"
         raise HomeAssistantError(f"Invalid option: {option}")
-
-    @staticmethod
-    def icon_for_outlet_select(outlet_name: str, outlet_type: str | None) -> str | None:
-        """Choose an icon for an outlet mode SelectEntity.
-
-        Args:
-            outlet_name: Outlet name.
-            outlet_type: Outlet type token.
-
-        Returns:
-            A Material Design Icon string.
-        """
-        name = (outlet_name or "").strip().lower()
-        t = (outlet_type or "").strip().upper()
-
-        if any(token in name for token in ("alarm", "warn")):
-            return ICON_ALARM
-        if "PUMP" in t:
-            return ICON_PUMP
-        if "LIGHT" in t:
-            return ICON_LIGHTBULB
-        if "HEATER" in t:
-            return ICON_RADIATOR
-        return ICON_TOGGLE_SWITCH_OUTLINE

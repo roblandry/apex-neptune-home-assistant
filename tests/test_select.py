@@ -119,8 +119,8 @@ class _Resp:
     async def text(self) -> str:
         """Return the configured response body.
 
-        Returns:
-            Response body text.
+        from custom_components.apex_fusion.apex_fusion import OutletMode
+                Response body text.
         """
         return self._text
 
@@ -225,7 +225,8 @@ class _HeadersRaises:
 
 
 def test_select_helpers_cover_all_branches():
-    from custom_components.apex_fusion.apex_fusion.outputs import OutletMode
+    from custom_components.apex_fusion.apex_fusion import OutletMode
+    from custom_components.apex_fusion.select import icon_for_outlet_select
 
     assert OutletMode.is_selectable_outlet({"state": "AON"}) is True
     assert OutletMode.is_selectable_outlet({"state": "AOF"}) is True
@@ -254,21 +255,12 @@ def test_select_helpers_cover_all_branches():
     with pytest.raises(HomeAssistantError):
         OutletMode.mode_from_option("nope")
 
-    assert OutletMode.icon_for_outlet_select("Alarm 1 2", "EB832") == "mdi:alarm"
-    assert OutletMode.icon_for_outlet_select("Warn Outlet", "EB832") == "mdi:alarm"
-    assert (
-        OutletMode.icon_for_outlet_select("AI Nero", "MXMPump|AI|Nero5") == "mdi:pump"
-    )
-    assert (
-        OutletMode.icon_for_outlet_select("Light", "SomeLightType") == "mdi:lightbulb"
-    )
-    assert (
-        OutletMode.icon_for_outlet_select("Heater", "SomeHeaterType") == "mdi:radiator"
-    )
-    assert (
-        OutletMode.icon_for_outlet_select("Something", "")
-        == "mdi:toggle-switch-outline"
-    )
+    assert icon_for_outlet_select("Alarm 1 2", "EB832") == "mdi:alarm"
+    assert icon_for_outlet_select("Warn Outlet", "EB832") == "mdi:alarm"
+    assert icon_for_outlet_select("AI Nero", "MXMPump|AI|Nero5") == "mdi:pump"
+    assert icon_for_outlet_select("Light", "SomeLightType") == "mdi:lightbulb"
+    assert icon_for_outlet_select("Heater", "SomeHeaterType") == "mdi:radiator"
+    assert icon_for_outlet_select("Something", "") == "mdi:toggle-switch-outline"
 
 
 async def test_select_setup_entry_creates_selects_and_listener_adds_new(
@@ -353,7 +345,7 @@ async def test_select_entity_attributes_include_raw_and_mxm(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -407,7 +399,7 @@ async def test_select_entity_attributes_extract_percent_from_status_list(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -457,7 +449,7 @@ async def test_select_entity_attaches_to_module_device_when_unique_mconf_match(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -500,7 +492,7 @@ async def test_select_entity_falls_back_to_controller_when_ambiguous_mconf(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -541,7 +533,7 @@ async def test_select_entity_attaches_mxm_outlets_to_mxm_module_when_unique(
         device_identifier="TEST",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -572,7 +564,7 @@ async def test_select_find_outlet_handles_non_list_and_non_dict(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -613,7 +605,7 @@ async def test_select_control_requires_password(hass, enable_custom_integrations
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -646,7 +638,7 @@ async def test_select_control_invalid_mode_raises(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -679,7 +671,7 @@ async def test_select_control_uses_existing_cookie_sid_and_put_success(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -717,7 +709,7 @@ async def test_select_control_login_404_raises(
         device_identifier="ABC",
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(
@@ -755,7 +747,7 @@ async def test_select_control_coordinator_error_propagates(
         side_effect=HomeAssistantError("Not authorized to control output")
     )
 
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletRef
+    from custom_components.apex_fusion.apex_fusion import OutletRef
     from custom_components.apex_fusion.select import ApexOutletModeSelect
 
     ent = ApexOutletModeSelect(

@@ -28,30 +28,40 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import slugify
 
-from .apex_fusion import ApexFusionContext
-from .apex_fusion.data_fields import section_field
-from .apex_fusion.discovery import ApexDiscovery, OutletIntensityRef, ProbeRef
-from .apex_fusion.network import network_field
-from .apex_fusion.outputs import (
-    icon_for_outlet_type,
-)
-from .apex_fusion.probes import (
+from .apex_fusion import (
+    ApexDiscovery,
+    ApexFusionContext,
+    OutletIntensityRef,
+    ProbeRef,
     as_float,
-    icon_for_probe_type,
+    network_field,
+    section_field,
+    trident_level_ml,
     units_and_meta,
 )
-from .apex_fusion.trident import trident_level_ml
 from .const import (
     DOMAIN,
     ICON_ALERT_CIRCLE_OUTLINE,
     ICON_BEAKER_OUTLINE,
     ICON_BRIGHTNESS_PERCENT,
     ICON_BUG_OUTLINE,
+    ICON_CURRENT_AC,
+    ICON_FLASH,
+    ICON_FLASK,
     ICON_FLASK_OUTLINE,
+    ICON_GAUGE,
     ICON_IP_NETWORK,
     ICON_IP_NETWORK_OUTLINE,
+    ICON_LIGHTBULB,
+    ICON_PH,
+    ICON_POWER_SOCKET_US,
+    ICON_PUMP,
+    ICON_RADIATOR,
     ICON_ROUTER_NETWORK,
+    ICON_SHAKER_OUTLINE,
     ICON_SIGNAL,
+    ICON_TEST_TUBE,
+    ICON_THERMOMETER,
     ICON_TRASH_CAN_OUTLINE,
     ICON_WIFI_SETTINGS,
     ICON_WIFI_STRENGTH_4,
@@ -62,6 +72,61 @@ from .coordinator import (
     build_device_info,
     build_trident_device_info,
 )
+
+
+def icon_for_probe_type(probe_type: str, probe_name: str) -> str | None:
+    """Return an icon for a probe type/name.
+
+    This is a Home Assistant UI concern, so the helper lives in the platform
+    module that uses it.
+
+    Args:
+        probe_type: Probe type token.
+        probe_name: Probe name.
+
+    Returns:
+        A Material Design Icon string.
+    """
+
+    t = (probe_type or "").strip().lower()
+    n = (probe_name or "").strip().lower()
+
+    if t in {"temp", "tmp"}:
+        return ICON_THERMOMETER
+    if t == "ph":
+        return ICON_PH
+    if t == "cond":
+        return ICON_SHAKER_OUTLINE if n.startswith("salt") else ICON_FLASH
+    if t == "amps":
+        return ICON_CURRENT_AC
+    if t == "alk":
+        return ICON_TEST_TUBE
+    if t == "ca":
+        return ICON_FLASK
+    if t == "mg":
+        return ICON_FLASK_OUTLINE
+    return ICON_GAUGE
+
+
+def icon_for_outlet_type(outlet_type: str | None) -> str | None:
+    """Return an icon for an outlet based on its device type.
+
+    Args:
+        outlet_type: Raw outlet type token.
+
+    Returns:
+        A Material Design Icon string.
+    """
+
+    t = (outlet_type or "").strip().upper()
+    if "PUMP" in t:
+        return ICON_PUMP
+    if "LIGHT" in t:
+        return ICON_LIGHTBULB
+    if "HEATER" in t:
+        return ICON_RADIATOR
+    return ICON_POWER_SOCKET_US
+
 
 _SIMPLE_REST_SINGLE_SENSOR_MODE = False
 

@@ -53,19 +53,20 @@ class _CoordinatorStub:
 
 
 def test_sensor_helpers_cover_all_branches():
-    from custom_components.apex_fusion.apex_fusion.data_fields import section_field
-    from custom_components.apex_fusion.apex_fusion.network import network_field
+    from custom_components.apex_fusion.apex_fusion import network_field, section_field
     from custom_components.apex_fusion.apex_fusion.outputs import (
         friendly_outlet_name,
-        icon_for_outlet_type,
         pretty_model,
     )
     from custom_components.apex_fusion.apex_fusion.probes import (
         ProbeMetaResolver,
         as_float,
         friendly_probe_name,
-        icon_for_probe_type,
         units_and_meta,
+    )
+    from custom_components.apex_fusion.sensor import (
+        icon_for_outlet_type,
+        icon_for_probe_type,
     )
 
     assert icon_for_probe_type("tmp", "Tmp") == "mdi:thermometer"
@@ -91,6 +92,10 @@ def test_sensor_helpers_cover_all_branches():
     assert friendly_probe_name(name="Salinity", probe_type="cond") == "Conductivity"
     assert friendly_probe_name(name="ORP", probe_type="orp") == "ORP"
     assert friendly_probe_name(name="Redox", probe_type="orp") == "ORP"
+
+    assert friendly_probe_name(name="NO3", probe_type="no3") == "Nitrogen"
+    assert friendly_probe_name(name="Nitrogen", probe_type="nitrogen") == "Nitrogen"
+    assert friendly_probe_name(name="PO4", probe_type="po4") == "Phosphate"
 
     assert pretty_model("Nero5") == "Nero 5"
     assert pretty_model("Nero") == "Nero"
@@ -118,6 +123,12 @@ def test_sensor_helpers_cover_all_branches():
         friendly_outlet_name(outlet_name="Trident_4_3", outlet_type="selector")
         == "Combined Testing"
     )
+
+    assert units_and_meta(probe_name="Tmp", probe_type="temp", value=20.0)[0] == "°C"
+    assert units_and_meta(probe_name="Tmp", probe_type="temp", value=80.0)[0] == "°F"
+    assert units_and_meta(probe_name="ORP", probe_type="orp", value=300.0)[0] == "mV"
+    assert units_and_meta(probe_name="NO3", probe_type="no3", value=1.0)[0] == "ppm"
+    assert units_and_meta(probe_name="PO4", probe_type="po4", value=0.1)[0] == "ppm"
     # pretty_name already included in label -> label only
     assert friendly_outlet_name(
         outlet_name="Nero_5", outlet_type="MXMPump|AI|Nero5"
@@ -518,7 +529,7 @@ async def test_outlet_intensity_sensor_creates_vdm_module_device(
 
 async def test_outlet_intensity_sensor_refresh_and_lifecycle_cover_branches():
     from custom_components.apex_fusion import sensor
-    from custom_components.apex_fusion.apex_fusion.discovery import OutletIntensityRef
+    from custom_components.apex_fusion.apex_fusion import OutletIntensityRef
 
     listeners: list[Callable[[], None]] = []
     coordinator = _CoordinatorStub(

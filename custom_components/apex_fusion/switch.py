@@ -27,8 +27,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .apex_fusion import ApexFusionContext
-from .apex_fusion.util import to_int
+from .apex_fusion import ApexFusionContext, to_int
 from .const import (
     CONF_HOST,
     CONF_PASSWORD,

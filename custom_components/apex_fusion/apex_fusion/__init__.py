@@ -16,6 +16,7 @@ from __future__ import annotations
 # Public API
 # -----------------------------------------------------------------------------
 from .context import ApexFusionContext
+from .data_fields import section_field
 from .discovery import (
     ApexDiscovery,
     DigitalProbeRef,
@@ -34,8 +35,16 @@ from .extract import (
 )
 from .inputs import DigitalValueCodec
 from .modules import best_module_candidates_by_abaddr, hwtype_from_module
+from .network import network_bool, network_field
 from .outputs import OutletMode
-from .probes import ProbeMetaResolver
+from .probes import ProbeMetaResolver, as_float, units_and_meta
+from .trident import (
+    trident_is_testing,
+    trident_level_ml,
+    trident_reagent_empty,
+    trident_waste_full,
+)
+from .util import to_int
 
 __all__ = [
     "ApexDiscovery",
@@ -48,12 +57,22 @@ __all__ = [
     "ProbeMetaResolver",
     "ProbeRef",
     "RAW_CONTAINER_KEYS",
+    "as_float",
     "best_module_candidates_by_abaddr",
     "find_in_raw_containers",
     "hwtype_from_module",
     "iter_present_module_items",
     "mconf_modules_from_data",
+    "network_bool",
+    "network_field",
     "raw_modules_from_data",
     "raw_modules_from_raw",
     "raw_nstat_from_data",
+    "section_field",
+    "to_int",
+    "trident_is_testing",
+    "trident_level_ml",
+    "trident_reagent_empty",
+    "trident_waste_full",
+    "units_and_meta",
 ]

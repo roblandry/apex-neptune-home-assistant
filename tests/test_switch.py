@@ -82,7 +82,7 @@ class _Session:
 
 
 def test_switch_to_int_helper_covers_float_and_none():
-    from custom_components.apex_fusion.apex_fusion.util import to_int
+    from custom_components.apex_fusion.apex_fusion import to_int
 
     assert to_int(2.0) == 2
     assert to_int("nope") is None

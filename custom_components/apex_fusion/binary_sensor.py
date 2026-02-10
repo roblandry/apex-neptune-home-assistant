@@ -19,11 +19,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import slugify
 
-from .apex_fusion import ApexFusionContext
-from .apex_fusion.discovery import ApexDiscovery, DigitalProbeRef
-from .apex_fusion.inputs import DigitalValueCodec
-from .apex_fusion.network import network_bool
-from .apex_fusion.trident import (
+from .apex_fusion import (
+    ApexDiscovery,
+    ApexFusionContext,
+    DigitalProbeRef,
+    DigitalValueCodec,
+    network_bool,
     trident_is_testing,
     trident_reagent_empty,
     trident_waste_full,

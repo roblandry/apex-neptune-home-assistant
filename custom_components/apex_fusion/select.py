@@ -26,12 +26,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .apex_fusion import ApexFusionContext
-from .apex_fusion.discovery import ApexDiscovery, OutletRef
-from .apex_fusion.outputs import OutletMode
+from .apex_fusion import ApexDiscovery, ApexFusionContext, OutletMode, OutletRef
 from .const import (
     CONF_PASSWORD,
     DOMAIN,
+    ICON_ALARM,
+    ICON_LIGHTBULB,
+    ICON_PUMP,
+    ICON_RADIATOR,
+    ICON_TOGGLE_SWITCH_OUTLINE,
     LOGGER_NAME,
 )
 from .coordinator import (
@@ -42,6 +45,32 @@ from .coordinator import (
     normalize_module_hwtype_from_outlet_type,
     unambiguous_module_abaddr_from_config,
 )
+
+
+def icon_for_outlet_select(outlet_name: str, outlet_type: str | None) -> str | None:
+    """Choose an icon for an outlet mode SelectEntity.
+
+    Args:
+        outlet_name: Outlet name.
+        outlet_type: Outlet type token.
+
+    Returns:
+        A Material Design Icon string.
+    """
+
+    name = (outlet_name or "").strip().lower()
+    t = (outlet_type or "").strip().upper()
+
+    if any(token in name for token in ("alarm", "warn")):
+        return ICON_ALARM
+    if "PUMP" in t:
+        return ICON_PUMP
+    if "LIGHT" in t:
+        return ICON_LIGHTBULB
+    if "HEATER" in t:
+        return ICON_RADIATOR
+    return ICON_TOGGLE_SWITCH_OUTLINE
+
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
 
@@ -151,7 +180,7 @@ class ApexOutletModeSelect(SelectEntity):
             getattr(self._coordinator, "last_update_success", True)
         )
         self._attr_current_option = None
-        self._attr_icon = OutletMode.icon_for_outlet_select(ref.name, outlet_type)
+        self._attr_icon = icon_for_outlet_select(ref.name, outlet_type)
         self._refresh_from_coordinator()
 
     def _find_outlet(self) -> dict[str, Any]:
@@ -229,7 +258,7 @@ class ApexOutletModeSelect(SelectEntity):
         self._attr_current_option = OutletMode.option_from_raw_state(raw_state)
         self._attr_extra_state_attributes = self._read_extra_attrs()
         outlet = self._find_outlet()
-        self._attr_icon = OutletMode.icon_for_outlet_select(
+        self._attr_icon = icon_for_outlet_select(
             self._ref.name, cast(str | None, outlet.get("type"))
         )
 

@@ -30,5 +30,15 @@
   "ruff.useBundled": false,
   "ruff.path": [
     ".venv/bin/ruff"
-  ]
+  ],
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/__pycache__/**": true,
+    "**/node_modules/**": true,
+    "**/.venv/**": true,
+    "**/dist/**": true,
+    "**/build/**": true,
+    "**/.cache/**": true
+  }
 }

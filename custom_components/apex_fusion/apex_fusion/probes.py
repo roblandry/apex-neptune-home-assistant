@@ -1,6 +1,6 @@
 """Apex Fusion probe helpers.
 
-Centralized probe naming, icons, and unit/device_class selection.
+Centralized probe naming and unit/device_class selection.
 """
 
 from __future__ import annotations
@@ -12,18 +12,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfTemperature
-
-from ..const import (
-    ICON_CURRENT_AC,
-    ICON_FLASH,
-    ICON_FLASK,
-    ICON_FLASK_OUTLINE,
-    ICON_GAUGE,
-    ICON_PH,
-    ICON_SHAKER_OUTLINE,
-    ICON_TEST_TUBE,
-    ICON_THERMOMETER,
-)
 
 # -----------------------------------------------------------------------------
 # Conversions
@@ -54,37 +42,7 @@ def as_float(value: Any) -> float | None:
 
 
 class ProbeMetaResolver:
-    """Resolve icons, friendly names, and metadata for probe values."""
-
-    @staticmethod
-    def icon_for_probe_type(probe_type: str, probe_name: str) -> str | None:
-        """Return an icon for a probe type/name.
-
-        Args:
-            probe_type: Probe type token.
-            probe_name: Probe name.
-
-        Returns:
-            A Material Design Icon string.
-        """
-        t = (probe_type or "").strip().lower()
-        n = (probe_name or "").strip().lower()
-
-        if t in {"temp", "tmp"}:
-            return ICON_THERMOMETER
-        if t == "ph":
-            return ICON_PH
-        if t == "cond":
-            return ICON_SHAKER_OUTLINE if n.startswith("salt") else ICON_FLASH
-        if t == "amps":
-            return ICON_CURRENT_AC
-        if t == "alk":
-            return ICON_TEST_TUBE
-        if t == "ca":
-            return ICON_FLASK
-        if t == "mg":
-            return ICON_FLASK_OUTLINE
-        return ICON_GAUGE
+    """Resolve friendly names and metadata for probe values."""
 
     @staticmethod
     def friendly_probe_name(*, name: str, probe_type: str | None) -> str:
@@ -184,19 +142,6 @@ class ProbeMetaResolver:
             return "ppm", None, SensorStateClass.MEASUREMENT
 
         return None, None, SensorStateClass.MEASUREMENT
-
-
-def icon_for_probe_type(probe_type: str, probe_name: str) -> str | None:
-    """Return an icon for a probe type/name.
-
-    Args:
-        probe_type: Probe type token.
-        probe_name: Probe name.
-
-    Returns:
-        A Material Design Icon string.
-    """
-    return ProbeMetaResolver.icon_for_probe_type(probe_type, probe_name)
 
 
 def friendly_probe_name(*, name: str, probe_type: str | None) -> str:
