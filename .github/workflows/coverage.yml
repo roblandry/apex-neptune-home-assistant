@@ -58,9 +58,9 @@ jobs:
         if: matrix.ha == '2026.1'
         run: |
           mkdir -p badges
-          # coverage_badge imports pkg_resources, which is provided by setuptools.
-          python -m pip install --upgrade setuptools
-          python -m coverage_badge -o badges/coverage.svg -f
+          # Use genbadge instead of coverage_badge to avoid pkg_resources/setuptools issues on Py3.13.
+          python -m pip install --upgrade genbadge
+          python -m genbadge coverage -i coverage.xml -o badges/coverage.svg
 
       - name: Upload coverage.xml to Codecov
         if: matrix.ha == '2026.1'
