@@ -2,10 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.1
+
+### CI
+
+- fix failing test
+- generate coverage badge with genbadge
+- fix genbadge invocation
+- install genbadge coverage deps
+
+### Chores
+
+- chore(manifests) update manifests for addition to brands and HACS
+- fix md lint
+- chore(manifests) correct HACS manifest
+- update changelog
+- Inform users of BROKEN v0.1.0
+
+### Features
+
+- add read-only mode and strict REST auth
+
 ## v0.1.0
 
 ### Chores
 
+- sync TODO issue links
+- sync TODO issue links
 - sync TODO issue links
 - v0.1.0
 
