@@ -2,11 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.0
+
+### Chores
+
+- sync TODO issue links
+- v0.1.0
+
+### Features
+
+- coordinator-driven REST control; add feed switches; restore 100% coverage; update README.md
+- unified device info identifiers; added trident waste full and reagent empty binary sensors; buttons for trident priming and resetting reagents/waste; number entity for trident waste container; updated /rest/config polling; README update
+- moved entities to their respective modules; renamed entities; added friendly names for probes; renamed firmware updates; new trident selects to initiate testing; added config refresh buttons to modules;
+
+### Fixes
+
+- replace missing icon
+
+### Refactors
+
+- reconfigure device naming scheme; Split trident into own device
+- internal api
+- clean internal api
+
 ## v0.1.0-rc.2
 
 ### Chores
 
 - keep git-cliff output markdownlint-clean
+- v0.1.0-rc.2
 
 ### Features
 
