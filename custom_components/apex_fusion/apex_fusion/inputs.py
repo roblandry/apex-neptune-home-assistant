@@ -38,12 +38,6 @@ class DigitalValueCodec:
         if isinstance(value, int):
             if value in (0, 1):
                 return value
-            # TODO: are these found anywhere; I dont think so.
-            # Issue URL: https://github.com/roblandry/apex-fusion-home-assistant/issues/14
-            if value == 100:
-                return 1
-            if value == 200:
-                return 0
             return None
         if isinstance(value, float):
             if value in (0.0, 1.0):

@@ -18,15 +18,11 @@ def test_binary_sensor_int_coercion_helpers_cover_branches():
     assert DigitalValueCodec.as_int_0_1(0) == 0
     assert DigitalValueCodec.as_int_0_1(1) == 1
     assert DigitalValueCodec.as_int_0_1(2) is None
-    assert DigitalValueCodec.as_int_0_1(100) == 1
-    assert DigitalValueCodec.as_int_0_1(200) == 0
     assert DigitalValueCodec.as_int_0_1(0.0) == 0
     assert DigitalValueCodec.as_int_0_1(1.0) == 1
     assert DigitalValueCodec.as_int_0_1(0.5) is None
     assert DigitalValueCodec.as_int_0_1("0") == 0
     assert DigitalValueCodec.as_int_0_1(" 1 ") == 1
-    assert DigitalValueCodec.as_int_0_1("100") == 1
-    assert DigitalValueCodec.as_int_0_1("200") == 0
     assert DigitalValueCodec.as_int_0_1("nope") is None
     assert DigitalValueCodec.as_int_0_1(object()) is None
 
