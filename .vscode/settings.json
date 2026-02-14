@@ -40,5 +40,16 @@
     "**/dist/**": true,
     "**/build/**": true,
     "**/.cache/**": true
+  },
+  "todo-tree.highlights.customHighlight": {
+    "TODO": {
+      "gutterIcon": true
+    },
+    "FIXME": {
+      "foreground": "red",
+      "iconColour": "red",
+      "gutterIcon": true,
+      "type": "text-and-comment"
+    }
   }
 }
